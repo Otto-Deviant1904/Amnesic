@@ -1,0 +1,11 @@
+node_modules/
+out/
+dist/
+dist-electron/
+.vite/
+coverage/
+playwright-report/
+test-results/
+verification/reports/
+*.log
+.DS_Store

@@ -1,0 +1,109 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  /* NOTE: tab-strip + address-bar combined height must match TOOLBAR_HEIGHT
+     in src/main/index.ts, since that's where the WebContentsView bounds are set. */
+}
+
+.tab-strip {
+  display: flex;
+  align-items: center;
+  height: 40px;
+  background: #e8e8e8;
+  padding: 0 4px;
+  gap: 2px;
+  overflow-x: auto;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  height: 32px;
+  border-radius: 6px 6px 0 0;
+  background: #d5d5d5;
+  cursor: pointer;
+  max-width: 200px;
+  flex-shrink: 0;
+}
+
+.tab--active {
+  background: #fff;
+}
+
+.tab__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.tab__close {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px;
+}
+
+.tab-strip__new {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 16px;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.address-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 48px;
+  padding: 0 8px;
+  background: #fff;
+  border-bottom: 1px solid #ccc;
+}
+
+.address-bar button {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 16px;
+  width: 28px;
+  height: 28px;
+}
+
+.address-bar button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.address-bar__input {
+  flex: 1;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 16px;
+  border: 1px solid #ccc;
+  font-size: 14px;
+}
