@@ -1,0 +1,13 @@
+{
+  "name": "amnesic-browser",
+  "version": "0.0.1",
+  "private": true,
+  "description": "A tabbed desktop browser engineered to leave nothing recoverable on disk after the process exits.",
+  "main": "dist/main/main.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "electron": "43.0.0"
+  }
+}
