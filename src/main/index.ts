@@ -1,4 +1,12 @@
-import { app, BrowserWindow, WebContentsView, session, ipcMain, type Session } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  WebContentsView,
+  session,
+  ipcMain,
+  type Session,
+  type WebContents
+} from 'electron'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -33,8 +41,14 @@ if (process.platform === 'linux') {
 
 const SESSION_PARTITION = 'inmemory-session' // no `persist:` prefix — this is what makes it memory-only
 
+interface TabEntry {
+  view: WebContentsView
+  /** False until the first loadURL — the renderer shows the start page instead. */
+  navigated: boolean
+}
+
 let mainWindow: BrowserWindow | null = null
-const tabViews = new Map<string, WebContentsView>()
+const tabs = new Map<string, TabEntry>() // insertion order doubles as tab order
 let activeTabId: string | null = null
 
 function getInMemorySession() {
@@ -82,10 +96,10 @@ const TOOLBAR_HEIGHT = 88 // must match the renderer's tab-strip + address-bar h
 
 function layoutActiveView(): void {
   if (!mainWindow || !activeTabId) return
-  const view = tabViews.get(activeTabId)
-  if (!view) return
+  const entry = tabs.get(activeTabId)
+  if (!entry) return
   const bounds = mainWindow.getContentBounds()
-  view.setBounds({
+  entry.view.setBounds({
     x: 0,
     y: TOOLBAR_HEIGHT,
     width: bounds.width,
@@ -94,29 +108,154 @@ function layoutActiveView(): void {
 }
 
 function setActiveTab(id: string): void {
-  if (!mainWindow) return
-  const previous = activeTabId ? tabViews.get(activeTabId) : null
-  if (previous) previous.setVisible(false)
+  if (!mainWindow || !tabs.has(id)) return
+  const previous = activeTabId ? tabs.get(activeTabId) : null
+  if (previous) previous.view.setVisible(false)
   activeTabId = id
-  const next = tabViews.get(id)
-  if (next) {
-    next.setVisible(true)
+  const next = tabs.get(id)
+  // A never-navigated tab stays hidden so the shell's start page shows through.
+  if (next && next.navigated) {
+    next.view.setVisible(true)
     layoutActiveView()
   }
+  mainWindow.webContents.send(IPC_CHANNELS.TAB_ACTIVATED, id)
 }
 
-function sendTabUpdate(id: string, view: WebContentsView): void {
-  if (!mainWindow) return
-  const wc = view.webContents
+function sendTabUpdate(id: string): void {
+  const entry = tabs.get(id)
+  if (!entry || !mainWindow) return
+  const wc = entry.view.webContents
   const state: TabState = {
     tabId: id,
-    url: wc.getURL(),
+    url: entry.navigated ? wc.getURL() : '',
     title: wc.getTitle(),
     loading: wc.isLoading(),
     canGoBack: wc.navigationHistory.canGoBack(),
     canGoForward: wc.navigationHistory.canGoForward()
   }
   mainWindow.webContents.send(IPC_CHANNELS.TAB_UPDATED, state)
+}
+
+function activeWebContents(): WebContents | null {
+  return activeTabId ? (tabs.get(activeTabId)?.view.webContents ?? null) : null
+}
+
+function focusAddressBar(): void {
+  if (!mainWindow) return
+  mainWindow.webContents.focus()
+  mainWindow.webContents.send(IPC_CHANNELS.SHELL_FOCUS_ADDRESS)
+}
+
+function cycleTab(delta: number): void {
+  const ids = [...tabs.keys()]
+  if (ids.length < 2 || !activeTabId) return
+  const index = ids.indexOf(activeTabId)
+  setActiveTab(ids[(index + delta + ids.length) % ids.length]!)
+}
+
+function selectTabByDigit(digit: number): void {
+  const ids = [...tabs.keys()]
+  const id = digit === 9 ? ids[ids.length - 1] : ids[digit - 1]
+  if (id) setActiveTab(id)
+}
+
+function adjustZoom(delta: number | null): void {
+  const wc = activeWebContents()
+  if (!wc) return
+  const level = delta === null ? 0 : Math.max(-5, Math.min(5, wc.getZoomLevel() + delta))
+  wc.setZoomLevel(level)
+}
+
+// Browser-chrome shortcuts, handled in main so they work no matter whether the
+// shell renderer or a page's WebContentsView has keyboard focus. `source` is
+// 'tab' for page views, 'shell' for the toolbar renderer — Escape is only a
+// stop-loading shortcut inside pages (the address bar owns Escape in the shell).
+function handleShortcut(input: Electron.Input, source: 'tab' | 'shell'): boolean {
+  if (input.type !== 'keyDown') return false
+  const mod = input.control || input.meta
+  const key = input.key.toLowerCase()
+  const wc = activeWebContents()
+
+  if (mod && !input.alt) {
+    if (key === 'tab') {
+      cycleTab(input.shift ? -1 : 1)
+      return true
+    }
+    if (!input.shift) {
+      switch (key) {
+        case 't':
+          createTab()
+          return true
+        case 'w':
+          if (activeTabId) closeTab(activeTabId)
+          return true
+        case 'l':
+          focusAddressBar()
+          return true
+        case 'r':
+          wc?.reload()
+          return true
+        case '=':
+        case '+':
+          adjustZoom(0.5)
+          return true
+        case '-':
+          adjustZoom(-0.5)
+          return true
+        case '0':
+          adjustZoom(null)
+          return true
+        case 'pagedown':
+          cycleTab(1)
+          return true
+        case 'pageup':
+          cycleTab(-1)
+          return true
+      }
+      if (key >= '1' && key <= '9') {
+        selectTabByDigit(Number(key))
+        return true
+      }
+    } else {
+      if (key === 'r') {
+        wc?.reloadIgnoringCache()
+        return true
+      }
+      if (key === '+' || key === '=') {
+        adjustZoom(0.5)
+        return true
+      }
+    }
+    return false
+  }
+
+  if (input.alt && !mod) {
+    if (key === 'arrowleft' && wc?.navigationHistory.canGoBack()) {
+      wc.navigationHistory.goBack()
+      return true
+    }
+    if (key === 'arrowright' && wc?.navigationHistory.canGoForward()) {
+      wc.navigationHistory.goForward()
+      return true
+    }
+    return false
+  }
+
+  if (key === 'f5') {
+    wc?.reload()
+    return true
+  }
+  if (key === 'escape' && source === 'tab' && wc?.isLoading()) {
+    wc.stop()
+    return true
+  }
+  return false
+}
+
+function attachShortcuts(wc: WebContents, source: 'tab' | 'shell'): void {
+  wc.on('before-input-event', (event, input) => {
+    if (handleShortcut(input, source)) event.preventDefault()
+  })
 }
 
 // Layer 2 of the three-layer WebRTC mitigation (ADR 0002): removes the
@@ -151,7 +290,13 @@ async function installWebRtcBlock(view: WebContentsView): Promise<void> {
   }
 }
 
-function createTab(url: string): string {
+// Only ever load web content — a compromised shell renderer must not be able
+// to point a tab at file:// or other local schemes via the navigate IPC.
+function isAllowedUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url)
+}
+
+function createTab(url?: string, options: { background?: boolean } = {}): string {
   if (!mainWindow) throw new Error('createTab called before mainWindow exists')
   const id = randomUUID()
   const view = new WebContentsView({
@@ -167,57 +312,86 @@ function createTab(url: string): string {
   view.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
   void installWebRtcBlock(view)
 
-  // v1 has no multi-window/new-tab-via-window.open feature — deny all popups
-  // rather than rely on Electron's default-deny behavior being unverified
-  // (security review finding: this project verifies rather than assumes).
-  view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  // Never create real popup windows. window.open / target=_blank / ctrl+click
+  // instead open as a new tab, which goes through this same createTab path and
+  // therefore carries every mitigation (in-memory session, WebRTC block,
+  // permission denial). Non-http(s) popup URLs are dropped entirely.
+  view.webContents.setWindowOpenHandler(({ url: popupUrl, disposition }) => {
+    if (isAllowedUrl(popupUrl)) {
+      createTab(popupUrl, { background: disposition === 'background-tab' })
+    }
+    return { action: 'deny' }
+  })
 
-  const notify = () => sendTabUpdate(id, view)
+  attachShortcuts(view.webContents, 'tab')
+
+  const notify = () => sendTabUpdate(id)
   view.webContents.on('did-start-loading', notify)
   view.webContents.on('did-stop-loading', notify)
   view.webContents.on('did-navigate', notify)
   view.webContents.on('did-navigate-in-page', notify)
   view.webContents.on('page-title-updated', notify)
 
-  view.webContents.loadURL(url)
+  const navigated = Boolean(url)
+  if (url) view.webContents.loadURL(url)
 
+  view.setVisible(false)
   mainWindow.contentView.addChildView(view)
-  tabViews.set(id, view)
-  setActiveTab(id)
+  tabs.set(id, { view, navigated })
+  if (!options.background) {
+    setActiveTab(id)
+    if (!navigated) focusAddressBar() // fresh empty tab: start typing immediately
+  }
   notify()
   return id
 }
 
 function closeTab(id: string): void {
-  const view = tabViews.get(id)
-  if (!view || !mainWindow) return
-  mainWindow.contentView.removeChildView(view)
-  view.webContents.close()
-  tabViews.delete(id)
+  const entry = tabs.get(id)
+  if (!entry || !mainWindow) return
+  const ids = [...tabs.keys()]
+  const index = ids.indexOf(id)
+  mainWindow.contentView.removeChildView(entry.view)
+  entry.view.webContents.close()
+  tabs.delete(id)
   mainWindow.webContents.send(IPC_CHANNELS.TAB_CLOSED, id)
   if (activeTabId === id) {
-    const next = tabViews.keys().next().value ?? null
     activeTabId = null
-    if (next) setActiveTab(next)
+    // Prefer the right-hand neighbour, then the left one — matches what every
+    // mainstream browser does and keeps closing a run of tabs predictable.
+    const next = ids[index + 1] ?? ids[index - 1]
+    if (next && tabs.has(next)) setActiveTab(next)
   }
+  // Closing the last tab closes the window, which triggers the wipe-and-exit
+  // path below — coherent with the product promise: nothing lingers.
+  if (tabs.size === 0) mainWindow.close()
 }
 
 function registerIpcHandlers(): void {
-  ipcMain.handle(IPC_CHANNELS.TAB_NEW, (_event, url?: string) =>
-    createTab(url || 'https://example.com')
-  )
+  ipcMain.handle(IPC_CHANNELS.TAB_NEW, (_event, url?: string) => createTab(url))
   ipcMain.handle(IPC_CHANNELS.TAB_CLOSE, (_event, tabId: string) => closeTab(tabId))
+  ipcMain.handle(IPC_CHANNELS.TAB_ACTIVATE, (_event, tabId: string) => setActiveTab(tabId))
   ipcMain.handle(IPC_CHANNELS.TAB_NAVIGATE, (_event, tabId: string, url: string) => {
-    tabViews.get(tabId)?.webContents.loadURL(url)
+    const entry = tabs.get(tabId)
+    if (!entry || !isAllowedUrl(url)) return
+    entry.navigated = true
+    entry.view.webContents.loadURL(url)
+    if (tabId === activeTabId) {
+      entry.view.setVisible(true)
+      layoutActiveView()
+    }
   })
   ipcMain.handle(IPC_CHANNELS.TAB_BACK, (_event, tabId: string) => {
-    tabViews.get(tabId)?.webContents.navigationHistory.goBack()
+    tabs.get(tabId)?.view.webContents.navigationHistory.goBack()
   })
   ipcMain.handle(IPC_CHANNELS.TAB_FORWARD, (_event, tabId: string) => {
-    tabViews.get(tabId)?.webContents.navigationHistory.goForward()
+    tabs.get(tabId)?.view.webContents.navigationHistory.goForward()
   })
   ipcMain.handle(IPC_CHANNELS.TAB_RELOAD, (_event, tabId: string) => {
-    tabViews.get(tabId)?.webContents.reload()
+    tabs.get(tabId)?.view.webContents.reload()
+  })
+  ipcMain.handle(IPC_CHANNELS.TAB_STOP, (_event, tabId: string) => {
+    tabs.get(tabId)?.view.webContents.stop()
   })
 }
 
@@ -225,6 +399,11 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
+    minWidth: 560,
+    minHeight: 400,
+    title: 'Amnesic',
+    backgroundColor: '#141413', // matches --bg in the renderer; avoids a white flash at startup
+    autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true,
@@ -234,6 +413,7 @@ function createWindow(): void {
   })
 
   mainWindow.on('resize', layoutActiveView)
+  attachShortcuts(mainWindow.webContents, 'shell')
 
   if (process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])

@@ -30,6 +30,25 @@ releases. See `research/` for the verification notes and
 `docs/adr/` for the architectural decisions and corrections that came out
 of that process.
 
+## Using it
+
+New tabs open on an in-app start page; the address bar accepts URLs or
+search terms (searches go to DuckDuckGo). `target=_blank` links and
+ctrl+click open as new tabs in the same hardened in-memory session —
+real popup windows are never created. Closing the last tab closes the
+window, which triggers the wipe-and-exit routine.
+
+| Shortcut                       | Action                                            |
+| ------------------------------ | ------------------------------------------------- |
+| `Ctrl+T` / `Ctrl+W`            | new / close tab                                   |
+| `Ctrl+Tab`, `Ctrl+PgUp/PgDn`   | cycle tabs                                        |
+| `Ctrl+1…8`, `Ctrl+9`           | nth / last tab                                    |
+| `Ctrl+L`                       | focus address bar                                 |
+| `Ctrl+R`, `F5`, `Ctrl+Shift+R` | reload (hard)                                     |
+| `Alt+←` / `Alt+→`              | back / forward                                    |
+| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | zoom in / out / reset                             |
+| `Esc`                          | stop loading (or revert address bar while typing) |
+
 ## Development
 
 ```sh

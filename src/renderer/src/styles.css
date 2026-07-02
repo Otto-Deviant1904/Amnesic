@@ -1,6 +1,30 @@
+/* Amnesic shell — quiet-instrument look.
+   Warm near-black surfaces, hairline borders, one copper accent used only
+   where state matters (focus, loading, active tab). URLs render in mono. */
+
 :root {
-  color-scheme: light dark;
-  font-family: system-ui, sans-serif;
+  color-scheme: dark;
+
+  --bg: #141413;
+  --bg-raised: #1d1d1b;
+  --bg-active: #262624;
+  --bg-hover: #222220;
+  --bg-inset: #0f0f0e;
+
+  --border: #2b2b28;
+  --border-strong: #383834;
+
+  --text: #e4e1d8;
+  --text-dim: #8f8c83;
+  --text-faint: #5f5d55;
+
+  --accent: #c98d4f;
+  --danger: #c0605c;
+
+  --font-ui:
+    -apple-system, 'Segoe UI', 'Cantarell', 'Noto Sans', system-ui, sans-serif;
+  --font-mono:
+    ui-monospace, 'JetBrains Mono', 'Cascadia Mono', 'Fira Code', 'DejaVu Sans Mono', monospace;
 }
 
 * {
@@ -14,96 +38,359 @@ body,
   height: 100%;
 }
 
+body {
+  font-family: var(--font-ui);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
 .app {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  /* NOTE: tab-strip + address-bar combined height must match TOOLBAR_HEIGHT
-     in src/main/index.ts, since that's where the WebContentsView bounds are set. */
 }
+
+/* NOTE: tab-strip (36px) + nav-bar (52px) = 88px must match TOOLBAR_HEIGHT
+   in src/main/index.ts, since that's where the WebContentsView bounds are set.
+   The progress bar overlays the boundary and adds no height. */
+.chrome {
+  position: relative;
+  flex-shrink: 0;
+  background: var(--bg);
+}
+
+/* ---- Tab strip ---- */
 
 .tab-strip {
   display: flex;
-  align-items: center;
-  height: 40px;
-  background: #e8e8e8;
-  padding: 0 4px;
-  gap: 2px;
+  align-items: stretch;
+  height: 36px;
+  padding: 6px 6px 0;
+  gap: 1px;
   overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tab-strip::-webkit-scrollbar {
+  display: none;
 }
 
 .tab {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 8px;
-  height: 32px;
+  gap: 7px;
+  padding: 0 8px 0 11px;
   border-radius: 6px 6px 0 0;
-  background: #d5d5d5;
-  cursor: pointer;
-  max-width: 200px;
-  flex-shrink: 0;
+  color: var(--text-dim);
+  cursor: default;
+  min-width: 72px;
+  max-width: 208px;
+  flex: 0 1 auto;
+  overflow: hidden;
+  transition: background 80ms ease, color 80ms ease;
+}
+
+.tab:hover {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 .tab--active {
-  background: #fff;
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.tab--active::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 6px 6px 0 0;
+}
+
+.tab__spinner {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: tab-pulse 1s ease-in-out infinite;
+}
+
+@keyframes tab-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
 }
 
 .tab__title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: 12px;
+  letter-spacing: 0.01em;
+  flex: 1;
 }
 
 .tab__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 17px;
+  height: 17px;
   border: none;
+  border-radius: 4px;
+  padding: 0;
   background: transparent;
+  color: inherit;
   cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  padding: 2px;
+  opacity: 0;
+  transition: opacity 80ms ease, background 80ms ease;
+}
+
+.tab:hover .tab__close,
+.tab--active .tab__close {
+  opacity: 0.65;
+}
+
+.tab__close:hover {
+  opacity: 1;
+  background: var(--border-strong);
 }
 
 .tab-strip__new {
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  font-size: 16px;
-  width: 28px;
-  height: 28px;
-  flex-shrink: 0;
-}
-
-.address-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 48px;
-  padding: 0 8px;
-  background: #fff;
-  border-bottom: 1px solid #ccc;
-}
-
-.address-bar button {
+  justify-content: center;
+  align-self: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  margin-left: 4px;
   border: none;
+  border-radius: 5px;
+  padding: 0;
   background: transparent;
+  color: var(--text-dim);
   cursor: pointer;
-  font-size: 16px;
-  width: 28px;
-  height: 28px;
+  transition: background 80ms ease, color 80ms ease;
 }
 
-.address-bar button:disabled {
-  opacity: 0.35;
+.tab-strip__new:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* ---- Navigation bar ---- */
+
+.nav-bar {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 52px;
+  padding: 0 10px;
+  background: var(--bg-raised);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.nav-bar__button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 6px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 80ms ease, color 80ms ease;
+}
+
+.nav-bar__button:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.nav-bar__button:active:not(:disabled) {
+  background: var(--bg-active);
+}
+
+.nav-bar__button:disabled {
+  color: var(--text-faint);
   cursor: default;
+}
+
+.address-field {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  height: 34px;
+  margin-left: 5px;
+  padding: 0 6px 0 10px;
+  gap: 7px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  transition: border-color 100ms ease, box-shadow 100ms ease;
+}
+
+.address-field:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.address-field__badge {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.address-field__badge--insecure {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--danger);
 }
 
 .address-bar__input {
   flex: 1;
-  height: 32px;
-  padding: 0 10px;
-  border-radius: 16px;
-  border: 1px solid #ccc;
-  font-size: 14px;
+  height: 100%;
+  min-width: 0;
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  outline: none;
+  user-select: text;
+}
+
+.address-bar__input::placeholder {
+  color: var(--text-faint);
+  font-family: var(--font-ui);
+}
+
+.address-bar__input::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* ---- Loading bar (overlays the chrome's bottom edge) ---- */
+
+.progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+
+.progress--active {
+  opacity: 1;
+}
+
+.progress--active::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 30%;
+  background: var(--accent);
+  animation: progress-sweep 1.1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes progress-sweep {
+  from {
+    left: -30%;
+  }
+  to {
+    left: 100%;
+  }
+}
+
+/* ---- Start page (visible when the active tab has never navigated) ---- */
+
+.start-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 0 24px 10vh;
+  text-align: center;
+}
+
+.start-page__mark {
+  font-size: 26px;
+  font-weight: 300;
+  letter-spacing: 0.42em;
+  margin-right: -0.42em; /* re-centre: tracking adds trailing space */
+  color: var(--text);
+}
+
+.start-page__mark::after {
+  content: '';
+  display: block;
+  width: 26px;
+  height: 2px;
+  margin: 14px auto 0;
+  background: var(--accent);
+}
+
+.start-page__tagline {
+  margin: 0;
+  max-width: 42ch;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.start-page__hints {
+  display: flex;
+  gap: 22px;
+  margin-top: 26px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.start-page__hints span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: 10.5px;
 }
