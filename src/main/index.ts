@@ -1,4 +1,4 @@
-import { app, BrowserWindow, WebContentsView, session, ipcMain } from 'electron'
+import { app, BrowserWindow, WebContentsView, session, ipcMain, type Session } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -41,8 +41,14 @@ function getInMemorySession() {
   return session.fromPartition(SESSION_PARTITION, { cache: false })
 }
 
-function configureSession(): void {
-  const ses = getInMemorySession()
+// Applied to both the in-memory tab session AND session.defaultSession.
+// defaultSession backs the shell BrowserWindow (tab strip/address bar UI) and
+// is used by Electron for anything not explicitly assigned a session — it
+// previously went unmitigated even though nothing untrusted should load
+// there, which security review flagged as a real parity gap against
+// docs/threat-model.md's mitigation table (a future bug that let untrusted
+// content reach defaultSession would otherwise be unprotected).
+function applySessionMitigations(ses: Session): void {
   ses.setSpellCheckerEnabled(false)
 
   // Referrer suppression — replaces the dead `no-referrers` switch (ADR 0002).
@@ -65,6 +71,11 @@ function configureSession(): void {
   ses.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false)
   })
+}
+
+function configureSession(): void {
+  applySessionMitigations(getInMemorySession())
+  applySessionMitigations(session.defaultSession)
 }
 
 const TOOLBAR_HEIGHT = 88 // must match the renderer's tab-strip + address-bar height in CSS
@@ -108,6 +119,38 @@ function sendTabUpdate(id: string, view: WebContentsView): void {
   mainWindow.webContents.send(IPC_CHANNELS.TAB_UPDATED, state)
 }
 
+// Layer 2 of the three-layer WebRTC mitigation (ADR 0002): removes the
+// WebRTC API surface from the page before any page script runs. This is
+// deliberately NOT done via a preload script — with contextIsolation
+// enabled, a preload script's `window` is a separate JS realm from the
+// page's, so `delete window.RTCPeerConnection` in preload never reaches
+// the page (see Electron's context-isolation docs: preload and page do
+// not share a global object). The only documented way to guarantee
+// main-world injection before page scripts run is the Chrome DevTools
+// Protocol via webContents.debugger — the same mechanism Playwright's own
+// page.addInitScript() uses under the hood.
+const WEBRTC_BLOCK_SCRIPT = `(() => {
+  delete window.RTCPeerConnection;
+  delete window.webkitRTCPeerConnection;
+  delete window.RTCDataChannel;
+  if (window.navigator && window.navigator.mediaDevices) {
+    delete window.navigator.mediaDevices.getUserMedia;
+  }
+})();`
+
+async function installWebRtcBlock(view: WebContentsView): Promise<void> {
+  const wc = view.webContents
+  try {
+    wc.debugger.attach('1.3')
+    await wc.debugger.sendCommand('Page.enable')
+    await wc.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', {
+      source: WEBRTC_BLOCK_SCRIPT
+    })
+  } catch (error) {
+    console.error('Failed to install WebRTC API removal for tab:', error)
+  }
+}
+
 function createTab(url: string): string {
   if (!mainWindow) throw new Error('createTab called before mainWindow exists')
   const id = randomUUID()
@@ -122,6 +165,12 @@ function createTab(url: string): string {
   // setWebRTCIPHandlingPolicy is per-webContents, not per-session — must be (re-)applied
   // to every tab. One of three WebRTC leak mitigation layers (ADR 0002).
   view.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
+  void installWebRtcBlock(view)
+
+  // v1 has no multi-window/new-tab-via-window.open feature — deny all popups
+  // rather than rely on Electron's default-deny behavior being unverified
+  // (security review finding: this project verifies rather than assumes).
+  view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
 
   const notify = () => sendTabUpdate(id, view)
   view.webContents.on('did-start-loading', notify)
@@ -201,6 +250,11 @@ async function cleanupAndExit(): Promise<void> {
   await ses.clearStorageData()
   await ses.clearCache()
   await ses.clearAuthCache()
+  // defaultSession backs the shell window — clear it too, not just the tab
+  // session (security review finding: this was previously left uncleared).
+  await session.defaultSession.clearStorageData()
+  await session.defaultSession.clearCache()
+  await session.defaultSession.clearAuthCache()
   // Hard exit, not app.quit() — app.exit() is immediate and skips will-quit,
   // so all cleanup must be awaited inline before calling it (ADR 0002 / threat-model §3).
   app.exit(0)
