@@ -10,7 +10,8 @@ export const IPC_CHANNELS = {
   TAB_UPDATED: 'tab:updated',
   TAB_CLOSED: 'tab:closed',
   TAB_ACTIVATED: 'tab:activated',
-  SHELL_FOCUS_ADDRESS: 'shell:focus-address'
+  SHELL_FOCUS_ADDRESS: 'shell:focus-address',
+  SHELL_NOTICE: 'shell:notice'
 } as const
 
 export interface TabState {
@@ -21,6 +22,12 @@ export interface TabState {
   loading: boolean
   canGoBack: boolean
   canGoForward: boolean
+}
+
+export interface ShellNotice {
+  /** download-blocked: transient toast; swap-active: persistent start-page warning. */
+  kind: 'download-blocked' | 'swap-active'
+  detail: string
 }
 
 export interface AmnesicBridge {
@@ -36,4 +43,5 @@ export interface AmnesicBridge {
   onTabClosed: (listener: (tabId: string) => void) => () => void
   onTabActivated: (listener: (tabId: string) => void) => () => void
   onFocusAddress: (listener: () => void) => () => void
+  onNotice: (listener: (notice: ShellNotice) => void) => () => void
 }

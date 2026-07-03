@@ -8,9 +8,10 @@ import {
   type WebContents
 } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { IPC_CHANNELS, type TabState } from '../shared/ipc'
+import { IPC_CHANNELS, type ShellNotice, type TabState } from '../shared/ipc'
+import { diskBackedSwapDevices } from './swap'
 
 // --- Command-line switches (must be set before app is ready) ---
 // Each entry verified against electron@43.0.0 / Chromium 150.0.7871.46.
@@ -33,10 +34,68 @@ app.commandLine.appendSwitch(
 // Intentionally NEVER importing/calling `crashReporter.start()` anywhere in this codebase (ADR 0002).
 
 // --- Redirect userData onto tmpfs (Linux only for v1; see docs/threat-model.md for other platforms) ---
+// Child processes also honour XDG_CACHE_HOME for non-Chromium caches — Mesa's
+// shader cache (~/.cache/mesa_shader_cache*) and fontconfig's cache are
+// written by the GPU process via the graphics stack, not by Chromium code, so
+// no Chromium switch covers them. Pointing XDG_CACHE_HOME at the tmpfs dir
+// sweeps those writes into RAM — but simply mutating process.env here does
+// NOT work: Chromium forks its zygote processes before this script runs, and
+// the GPU/renderer processes inherit the zygote's environment (verified
+// empirically by reading /proc/<gpu-pid>/environ — XDG_CACHE_HOME was unset
+// there; and by CI, where Mesa wrote to ~/.cache despite the env mutation).
+// The fix is a one-time relaunch with the env in place from birth. Automation
+// harnesses (Playwright et al., detected via --remote-debugging-port/-pipe)
+// can't survive a relaunch, so they must pass AMNESIC_SHM_DIR + XDG_CACHE_HOME
+// themselves — scripts/footprint-session.mjs does, and CI proves the
+// mechanism. Found and iterated via scripts/verify_footprint.sh; see ADR 0004.
+let ramUserData: string | null = null
+let relaunching = false
 if (process.platform === 'linux') {
-  const ramUserData = join('/dev/shm', `amnesic-browser-${process.pid}`)
-  mkdirSync(ramUserData, { recursive: true }) // app.setPath throws if the directory doesn't already exist
+  const preset = process.env['AMNESIC_SHM_DIR']
+  ramUserData =
+    preset && preset.startsWith('/dev/shm/')
+      ? preset
+      : join('/dev/shm', `amnesic-browser-${process.pid}`)
+  const xdgCache = join(ramUserData, 'xdg-cache')
+  mkdirSync(xdgCache, { recursive: true }) // app.setPath throws if the directory doesn't already exist
   app.setPath('userData', ramUserData)
+  // Skip the bootstrap under automation (Playwright would lose its
+  // connection) and in dev (electron-vite owns the process lifecycle; the
+  // relaunched instance would outlive its dev server). Both are
+  // development-time environments, not the shipped configuration.
+  const automated =
+    app.commandLine.hasSwitch('remote-debugging-port') ||
+    app.commandLine.hasSwitch('remote-debugging-pipe') ||
+    Boolean(process.env['ELECTRON_RENDERER_URL'])
+  if (!preset && !automated) {
+    process.env['AMNESIC_SHM_DIR'] = ramUserData
+    process.env['XDG_CACHE_HOME'] = xdgCache
+    relaunching = true
+    app.relaunch() // spawns with the current (now-augmented) environment
+    app.exit(0)
+  }
+}
+
+// A crash or SIGKILL can't run cleanup, so its tmpfs dir would sit in
+// /dev/shm until reboot. Sweep dirs whose owning pid is gone at every
+// startup — the best-effort recovery for exits nothing can intercept.
+// NOTE: our own dir is named after the *bootstrap* pid (which has exited
+// by the time the relaunched instance runs), so it must be skipped by
+// path, not by pid liveness.
+function sweepStaleShmDirs(): void {
+  try {
+    for (const entry of readdirSync('/dev/shm')) {
+      const match = /^amnesic-browser-(?:footprint-)?(\d+)$/.exec(entry)
+      if (!match) continue
+      const dir = join('/dev/shm', entry)
+      if (dir === ramUserData) continue
+      if (!existsSync(`/proc/${match[1]}`)) {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }
+  } catch {
+    /* /dev/shm unreadable — nothing to sweep */
+  }
 }
 
 const SESSION_PARTITION = 'inmemory-session' // no `persist:` prefix — this is what makes it memory-only
@@ -85,6 +144,20 @@ function applySessionMitigations(ses: Session): void {
   ses.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false)
   })
+
+  // Downloads are a v1 non-goal (CLAUDE.md), but Electron's DEFAULT
+  // will-download behavior is to open a native save dialog and write wherever
+  // the user picks — a real-disk write path plus a GTK recently-used.xbel
+  // entry (threat-model §2). Cancel every download outright and tell the
+  // shell, so the promise in the threat model is enforced, not assumed.
+  ses.on('will-download', (event, item) => {
+    event.preventDefault()
+    sendNotice({ kind: 'download-blocked', detail: item.getFilename() })
+  })
+}
+
+function sendNotice(notice: ShellNotice): void {
+  mainWindow?.webContents.send(IPC_CHANNELS.SHELL_NOTICE, notice)
 }
 
 function configureSession(): void {
@@ -368,7 +441,18 @@ function closeTab(id: string): void {
 }
 
 function registerIpcHandlers(): void {
-  ipcMain.handle(IPC_CHANNELS.TAB_NEW, (_event, url?: string) => createTab(url))
+  // The renderer requests its first tab once mounted and subscribed; that
+  // same moment is the earliest a notice can be delivered without racing
+  // the shell's listener registration, so startup checks run here.
+  let startupChecksDone = false
+  ipcMain.handle(IPC_CHANNELS.TAB_NEW, (_event, url?: string) => {
+    const id = createTab(url)
+    if (!startupChecksDone) {
+      startupChecksDone = true
+      checkSwap()
+    }
+    return id
+  })
   ipcMain.handle(IPC_CHANNELS.TAB_CLOSE, (_event, tabId: string) => closeTab(tabId))
   ipcMain.handle(IPC_CHANNELS.TAB_ACTIVATE, (_event, tabId: string) => setActiveTab(tabId))
   ipcMain.handle(IPC_CHANNELS.TAB_NAVIGATE, (_event, tabId: string, url: string) => {
@@ -393,6 +477,23 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.TAB_STOP, (_event, tabId: string) => {
     tabs.get(tabId)?.view.webContents.stop()
   })
+}
+
+// Warn (don't block) when disk-backed swap is active: under memory pressure
+// the OS can write this app's memory to disk, which no userspace process can
+// prevent — threat-model §3 tells users to run encrypted swap or none, and
+// this surfaces that advice exactly when it applies. Errors are swallowed:
+// missing /proc/swaps (non-Linux, hardened kernels) just means no warning.
+function checkSwap(): void {
+  if (process.platform !== 'linux') return
+  try {
+    const devices = diskBackedSwapDevices(readFileSync('/proc/swaps', 'utf8'))
+    if (devices.length > 0) {
+      sendNotice({ kind: 'swap-active', detail: devices.join(', ') })
+    }
+  } catch {
+    /* no /proc/swaps — nothing to warn about */
+  }
 }
 
 function createWindow(): void {
@@ -425,7 +526,11 @@ function createWindow(): void {
   // event could be sent before the renderer's IPC listener is registered.
 }
 
+let cleanupStarted = false
+
 async function cleanupAndExit(): Promise<void> {
+  if (cleanupStarted) return // several exit paths converge here; run once
+  cleanupStarted = true
   const ses = getInMemorySession()
   await ses.clearStorageData()
   await ses.clearCache()
@@ -435,15 +540,41 @@ async function cleanupAndExit(): Promise<void> {
   await session.defaultSession.clearStorageData()
   await session.defaultSession.clearCache()
   await session.defaultSession.clearAuthCache()
+  // Remove the tmpfs userData directory itself. tmpfs contents survive
+  // process exit until reboot, so without this, whatever Chromium wrote
+  // there (Local Storage, Local State, ...) stays readable in
+  // /dev/shm/amnesic-browser-<pid> after the app closes — found by
+  // scripts/verify_footprint.sh (ADR 0004). Deleting after the clears and
+  // immediately before exit; open file handles don't block unlinking on
+  // Linux. force:true because a failure to delete must not block exit.
+  if (ramUserData) {
+    rmSync(ramUserData, { recursive: true, force: true })
+  }
   // Hard exit, not app.quit() — app.exit() is immediate and skips will-quit,
   // so all cleanup must be awaited inline before calling it (ADR 0002 / threat-model §3).
   app.exit(0)
 }
 
 app.whenReady().then(() => {
+  if (relaunching) return // this instance only exists to re-exec with the cache env set
+  if (process.platform === 'linux') sweepStaleShmDirs()
   configureSession()
   registerIpcHandlers()
   createWindow()
+})
+
+// SIGTERM (kill, logout, shutdown) runs Chromium's own quit sequence, which
+// terminates the process while cleanupAndExit is still awaiting the session
+// clears — verified empirically: a SIGTERM'd instance left its tmpfs dir
+// behind even though window-all-closed had fired. Holding the quit open with
+// preventDefault until cleanup calls app.exit(0) itself closes that race
+// (app.exit does not re-emit before-quit, so there is no loop). SIGKILL and
+// crashes can't be intercepted; sweepStaleShmDirs() covers those on the next
+// launch.
+app.on('before-quit', (event) => {
+  if (relaunching || cleanupStarted) return
+  event.preventDefault()
+  void cleanupAndExit()
 })
 
 // No tray, no background mode: always quit when all windows close, on every

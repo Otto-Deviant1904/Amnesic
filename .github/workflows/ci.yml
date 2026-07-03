@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+      - name: Install xvfb
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb
+
+      - name: E2E smoke test
+        run: xvfb-run -a npx playwright test
+
+      # The empirical proof of the core claim. CI is the authoritative
+      # environment for this check (quiet filesystem); it must pass before
+      # any PR touching session/storage/cache handling merges (CLAUDE.md).
+      - name: Verify forensic footprint
+        run: FOOTPRINT_SKIP_BUILD=1 xvfb-run -a bash scripts/verify_footprint.sh

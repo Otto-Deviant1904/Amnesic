@@ -41,15 +41,27 @@ export default function App() {
   const { tabs, order, activeTabId, upsertTab, removeTab, setActiveTab } = useTabsStore()
   const [draft, setDraft] = useState('')
   const [editing, setEditing] = useState(false)
+  const [blockedDownload, setBlockedDownload] = useState<string | null>(null)
+  const [swapWarning, setSwapWarning] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const hasRequestedInitialTab = useRef(false)
+  const downloadToastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   useEffect(() => {
     const unsubscribers = [
       window.amnesic.onTabUpdated(upsertTab),
       window.amnesic.onTabClosed(removeTab),
       window.amnesic.onTabActivated(setActiveTab),
-      window.amnesic.onFocusAddress(() => inputRef.current?.focus())
+      window.amnesic.onFocusAddress(() => inputRef.current?.focus()),
+      window.amnesic.onNotice((notice) => {
+        if (notice.kind === 'download-blocked') {
+          setBlockedDownload(notice.detail)
+          clearTimeout(downloadToastTimer.current)
+          downloadToastTimer.current = setTimeout(() => setBlockedDownload(null), 5000)
+        } else if (notice.kind === 'swap-active') {
+          setSwapWarning(notice.detail)
+        }
+      })
     ]
     return () => unsubscribers.forEach((unsubscribe) => unsubscribe())
   }, [upsertTab, removeTab, setActiveTab])
@@ -246,6 +258,12 @@ export default function App() {
               placeholder="Search or type a URL"
             />
           </div>
+
+          {blockedDownload && (
+            <span className="download-notice" title={blockedDownload}>
+              download blocked · {blockedDownload}
+            </span>
+          )}
         </form>
 
         <div className={`progress${activeTab?.loading ? ' progress--active' : ''}`} />
@@ -271,6 +289,23 @@ export default function App() {
               <kbd>W</kbd> close
             </span>
           </div>
+
+          {swapWarning && (
+            <div className="swap-warning" role="note">
+              <span>
+                Disk-backed swap is active ({swapWarning}). Under memory pressure the OS can write
+                this session&apos;s memory to disk — use encrypted swap or disable swap for the full
+                guarantee. See docs/threat-model.md.
+              </span>
+              <button
+                className="swap-warning__dismiss"
+                onClick={() => setSwapWarning(null)}
+                aria-label="Dismiss warning"
+              >
+                <CloseIcon size={11} />
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

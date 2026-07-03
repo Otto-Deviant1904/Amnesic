@@ -21,8 +21,7 @@
   --accent: #c98d4f;
   --danger: #c0605c;
 
-  --font-ui:
-    -apple-system, 'Segoe UI', 'Cantarell', 'Noto Sans', system-ui, sans-serif;
+  --font-ui: -apple-system, 'Segoe UI', 'Cantarell', 'Noto Sans', system-ui, sans-serif;
   --font-mono:
     ui-monospace, 'JetBrains Mono', 'Cascadia Mono', 'Fira Code', 'DejaVu Sans Mono', monospace;
 }
@@ -90,7 +89,9 @@ body {
   max-width: 208px;
   flex: 0 1 auto;
   overflow: hidden;
-  transition: background 80ms ease, color 80ms ease;
+  transition:
+    background 80ms ease,
+    color 80ms ease;
 }
 
 .tab:hover {
@@ -154,7 +155,9 @@ body {
   color: inherit;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 80ms ease, background 80ms ease;
+  transition:
+    opacity 80ms ease,
+    background 80ms ease;
 }
 
 .tab:hover .tab__close,
@@ -182,7 +185,9 @@ body {
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
-  transition: background 80ms ease, color 80ms ease;
+  transition:
+    background 80ms ease,
+    color 80ms ease;
 }
 
 .tab-strip__new:hover {
@@ -216,7 +221,9 @@ body {
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
-  transition: background 80ms ease, color 80ms ease;
+  transition:
+    background 80ms ease,
+    color 80ms ease;
 }
 
 .nav-bar__button:hover:not(:disabled) {
@@ -244,7 +251,9 @@ body {
   background: var(--bg-inset);
   border: 1px solid var(--border);
   border-radius: 8px;
-  transition: border-color 100ms ease, box-shadow 100ms ease;
+  transition:
+    border-color 100ms ease,
+    box-shadow 100ms ease;
 }
 
 .address-field:focus-within {
@@ -288,6 +297,69 @@ body {
 
 .address-bar__input::selection {
   background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* ---- Notices ---- */
+
+.download-notice {
+  flex-shrink: 1;
+  min-width: 0;
+  margin-left: 8px;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg-inset));
+  color: var(--danger);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: notice-in 150ms ease;
+}
+
+@keyframes notice-in {
+  from {
+    opacity: 0;
+    transform: translateX(6px);
+  }
+}
+
+.swap-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 52ch;
+  margin-top: 34px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-raised));
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.55;
+  text-align: left;
+}
+
+.swap-warning__dismiss {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  border: none;
+  border-radius: 4px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.swap-warning__dismiss:hover {
+  background: var(--border-strong);
+  color: var(--text);
 }
 
 /* ---- Loading bar (overlays the chrome's bottom edge) ---- */

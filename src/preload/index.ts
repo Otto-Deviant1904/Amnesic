@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC_CHANNELS, type AmnesicBridge, type TabState } from '../shared/ipc'
+import { IPC_CHANNELS, type AmnesicBridge, type ShellNotice, type TabState } from '../shared/ipc'
 
 function subscribe<Args extends unknown[]>(
   channel: string,
@@ -26,7 +26,8 @@ const bridge: AmnesicBridge = {
   onTabUpdated: (listener) => subscribe<[TabState]>(IPC_CHANNELS.TAB_UPDATED, listener),
   onTabClosed: (listener) => subscribe<[string]>(IPC_CHANNELS.TAB_CLOSED, listener),
   onTabActivated: (listener) => subscribe<[string]>(IPC_CHANNELS.TAB_ACTIVATED, listener),
-  onFocusAddress: (listener) => subscribe<[]>(IPC_CHANNELS.SHELL_FOCUS_ADDRESS, listener)
+  onFocusAddress: (listener) => subscribe<[]>(IPC_CHANNELS.SHELL_FOCUS_ADDRESS, listener),
+  onNotice: (listener) => subscribe<[ShellNotice]>(IPC_CHANNELS.SHELL_NOTICE, listener)
 }
 
 contextBridge.exposeInMainWorld('amnesic', bridge)
