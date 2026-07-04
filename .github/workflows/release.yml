@@ -1,0 +1,49 @@
+name: Release
+
+# Tag-push releases only (v0.1.0 etc.). Deliberately no auto-updater and no
+# publish provider in electron-builder — releases are plain downloadable
+# assets plus a checksum file users can verify out of band (ADR 0006).
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # create the release and upload assets
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # The full quality gate runs before anything is published — a tag on a
+      # commit that fails checks must not produce a release.
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+
+      - name: Build AppImage
+        run: npm run dist
+
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum *.AppImage > SHA256SUMS
+
+      # Draft so a human reads the checksums and writes the notes before
+      # anything goes public.
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --draft \
+            --title "$GITHUB_REF_NAME" \
+            --verify-tag \
+            dist/*.AppImage dist/SHA256SUMS

@@ -1,0 +1,79 @@
+# Packaging config — decisions recorded in docs/adr/0006-packaging-and-distribution.md.
+# Linux AppImage only for v1 (the amnesic guarantee is Linux-only: tmpfs userData).
+# Deliberately NO auto-updater and NO publish config: an amnesic browser must not
+# ship phone-home machinery; releases are plain GitHub assets with checksums.
+appId: io.github.ottodeviant1904.amnesic
+productName: Amnesic
+executableName: amnesic
+artifactName: ${name}-${version}-${arch}.${ext}
+
+directories:
+  buildResources: build
+  output: dist
+
+# Package the Electron runtime already installed (and version-pinned) in
+# node_modules instead of re-downloading a zip of the same version — one
+# less network dependency for local and CI builds.
+electronDist: node_modules/electron/dist
+
+# No publish provider, ever: with one configured (or auto-detected from the
+# repository field), electron-builder writes app-update.yml updater metadata
+# into the package — machinery for an auto-updater this app must not have.
+publish: null
+
+# The copied Electron runtime ships default_app.asar (Electron's built-in
+# "no app found" app). The onlyLoadAppFromAsar fuse already makes it
+# unreachable; removing it drops dead weight from the artifact.
+afterPack: scripts/after-pack.cjs
+
+# electron-vite bundles main, preload, and renderer (including the react/
+# zustand runtime deps) into out/ — node_modules is not needed at runtime,
+# and shipping it would triple the artifact size.
+files:
+  - out/**
+  - '!node_modules/**'
+
+# Bake hardening into the binary: the packaged app must not be usable as a
+# generic Node runtime (ELECTRON_RUN_AS_NODE, NODE_OPTIONS, --inspect are all
+# ways to run arbitrary code with the app's identity or defeat its
+# mitigations), and it must only load its own asar.
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  # enableCookieEncryption stays false (the default) on purpose: it encrypts
+  # cookies via the OS keyring, which would write key material to real disk.
+  # Cookies here live in an in-memory session wiped on exit — nothing to protect.
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  icon: build/icons
+  category: Network
+  # Electron reads desktopName from package.json to set its Wayland app_id;
+  # syncDesktopName makes the packaged .desktop file name match it, so
+  # desktop environments can associate running windows with the entry.
+  syncDesktopName: true
+  synopsis: A browser that forgets
+  mimeTypes:
+    - x-scheme-handler/http
+    - x-scheme-handler/https
+  desktop:
+    entry:
+      # Electron sets WM_CLASS from the product name; matching it here keeps
+      # taskbar/dock grouping and pinning working.
+      StartupWMClass: Amnesic
+      Keywords: browser;private;amnesic;incognito;
+
+appImage:
+  # electron-builder's default desktop Exec injects --no-sandbox, because
+  # AppImage mounts are nosuid (the SUID sandbox helper can't work) and some
+  # distros restrict unprivileged user namespaces. Shipping a *browser* with
+  # the Chromium OS sandbox off is not acceptable: an empty override removes
+  # the flag and Chromium uses the userns sandbox, available on most modern
+  # kernels. The tradeoff and the Ubuntu 24.04 caveat are in ADR 0006 and
+  # the README.
+  executableArgs: []

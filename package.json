@@ -1,9 +1,18 @@
 {
   "name": "amnesic-browser",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "description": "A tabbed desktop browser engineered to leave nothing recoverable on disk after the process exits.",
+  "license": "MIT",
+  "author": {
+    "name": "OttoDev"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Otto-Deviant1904/Amnesic.git"
+  },
   "main": "out/main/index.js",
+  "desktopName": "amnesic.desktop",
   "engines": {
     "node": ">=20"
   },
@@ -17,6 +26,8 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "verify:footprint": "bash scripts/verify_footprint.sh",
+    "predist": "node node_modules/electron/install.js",
+    "dist": "electron-vite build && electron-builder --linux --publish never",
     "prepare": "husky"
   },
   "dependencies": {
@@ -32,6 +43,7 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.2.0",
     "electron": "43.0.0",
+    "electron-builder": "26.15.3",
     "electron-vite": "5.0.0",
     "eslint": "10.6.0",
     "eslint-config-prettier": "10.1.8",

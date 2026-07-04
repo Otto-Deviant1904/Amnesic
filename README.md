@@ -20,6 +20,36 @@ proof of the core claim — a scripted session followed by a filesystem
 diff) runs in CI on every push and must pass before any PR touching
 session/storage/cache handling merges (see `CLAUDE.md` and ADR 0004).
 
+## Installing
+
+Download the AppImage and `SHA256SUMS` from the
+[releases page](https://github.com/Otto-Deviant1904/Amnesic/releases),
+verify, and run:
+
+```sh
+sha256sum -c SHA256SUMS
+chmod +x amnesic-browser-*.AppImage
+./amnesic-browser-*.AppImage
+```
+
+There is deliberately **no auto-updater** — an amnesic browser should not
+phone home, even to itself. To update, download the next release and
+verify its checksum (ADR 0006).
+
+Launching a second instance hands its URLs to the running window and
+exits; the app registers as an `http(s)` handler so it can be set as the
+default browser.
+
+**Sandbox note:** unlike most Electron AppImages, this one does **not**
+ship `--no-sandbox` — a browser must not run hostile web content outside
+the Chromium OS sandbox. It uses the kernel's unprivileged user
+namespaces, available on most modern distros. On Ubuntu 23.10+ (which
+restricts unprivileged userns by default) the app will refuse to start
+rather than run unsandboxed; either install an AppArmor profile granting
+`userns` to the extracted binary, or run
+`sysctl kernel.apparmor_restrict_unprivileged_userns=0` at your own risk
+(it relaxes that restriction system-wide).
+
 ## Why the claims are verified, not asserted
 
 Every Chromium command-line switch and Electron session API this project
@@ -72,10 +102,21 @@ npm run typecheck
 npm run lint
 npm test         # vitest unit tests
 npm run test:e2e # playwright e2e tests
+npm run dist     # package the Linux AppImage into dist/
 ```
+
+Releases are cut by pushing a `v*` tag: CI re-runs the full quality gate,
+builds the AppImage, and drafts a GitHub release with a `SHA256SUMS` file
+(`.github/workflows/release.yml`). The app icon is generated from
+`build/icon.svg` by `scripts/generate_icon.sh` — edit the SVG, never the
+PNGs.
 
 ## Non-goals for v1
 
 See `CLAUDE.md`. Tor/SOCKS integration, anti-fingerprinting, extensions,
 bookmarks, downloads, password/autofill management, and any telemetry are
 explicitly out of scope and require explicit approval before being added.
+
+## License
+
+[MIT](LICENSE)

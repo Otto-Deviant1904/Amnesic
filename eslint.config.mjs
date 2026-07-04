@@ -44,5 +44,16 @@ export default tseslint.config(
       globals: globals.node
     }
   },
+  {
+    // electron-builder hooks are CommonJS (.cjs) by design.
+    files: ['scripts/**/*.cjs'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      globals: globals.node
+    },
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off'
+    }
+  },
   prettierConfig
 )

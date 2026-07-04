@@ -18,6 +18,7 @@ import {
   type TabState
 } from '../shared/ipc'
 import { attachShellContextMenu, attachTabContextMenu } from './context-menu'
+import { acquireSingleInstance, defaultLockDir, type SingleInstanceLock } from './single-instance'
 import { diskBackedSwapDevices } from './swap'
 
 // --- Command-line switches (must be set before app is ready) ---
@@ -55,6 +56,15 @@ app.commandLine.appendSwitch(
 // can't survive a relaunch, so they must pass AMNESIC_SHM_DIR + XDG_CACHE_HOME
 // themselves — scripts/footprint-session.mjs does, and CI proves the
 // mechanism. Found and iterated via scripts/verify_footprint.sh; see ADR 0004.
+// Development-time environments (Playwright, electron-vite dev) — they own
+// the process lifecycle, so both the relaunch bootstrap and the
+// single-instance lock are skipped under them (a dev instance must neither
+// hijack a running real instance nor be hijacked by one).
+const automated =
+  app.commandLine.hasSwitch('remote-debugging-port') ||
+  app.commandLine.hasSwitch('remote-debugging-pipe') ||
+  Boolean(process.env['ELECTRON_RENDERER_URL'])
+
 let ramUserData: string | null = null
 let relaunching = false
 if (process.platform === 'linux') {
@@ -67,13 +77,9 @@ if (process.platform === 'linux') {
   mkdirSync(xdgCache, { recursive: true }) // app.setPath throws if the directory doesn't already exist
   app.setPath('userData', ramUserData)
   // Skip the bootstrap under automation (Playwright would lose its
-  // connection) and in dev (electron-vite owns the process lifecycle; the
-  // relaunched instance would outlive its dev server). Both are
-  // development-time environments, not the shipped configuration.
-  const automated =
-    app.commandLine.hasSwitch('remote-debugging-port') ||
-    app.commandLine.hasSwitch('remote-debugging-pipe') ||
-    Boolean(process.env['ELECTRON_RENDERER_URL'])
+  // connection) and in dev (the relaunched instance would outlive its dev
+  // server). Both are development-time environments, not the shipped
+  // configuration.
   if (!preset && !automated) {
     process.env['AMNESIC_SHM_DIR'] = ramUserData
     process.env['XDG_CACHE_HOME'] = xdgCache
@@ -646,6 +652,7 @@ function registerIpcHandlers(): void {
       startupChecksDone = true
       checkSwap()
     }
+    drainForwardedUrls() // URLs forwarded by a second launch before the renderer mounted
     return id
   })
   ipcMain.handle(IPC_CHANNELS.TAB_CLOSE, (_event, tabId: string) => closeTab(tabId))
@@ -745,6 +752,34 @@ function checkSwap(): void {
   }
 }
 
+// --- Single-instance lock (see src/main/single-instance.ts and ADR 0006) ---
+// A second launch forwards its http(s) argv URLs here and exits; this
+// instance opens them as tabs and raises its window. URLs arriving before
+// the renderer has mounted (it creates the first tab itself via TAB_NEW)
+// are buffered and drained once tabs exist.
+let instanceLock: SingleInstanceLock | null = null
+const forwardedUrls: string[] = []
+
+function drainForwardedUrls(): void {
+  if (!mainWindow || tabs.size === 0) return // renderer not ready yet
+  for (const url of forwardedUrls.splice(0)) {
+    if (isAllowedUrl(url)) createTab(url, { background: true })
+  }
+}
+
+function focusMainWindow(): void {
+  if (!mainWindow) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+function onSecondInstance(urls: string[]): void {
+  forwardedUrls.push(...urls)
+  drainForwardedUrls()
+  focusMainWindow()
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -800,6 +835,9 @@ async function cleanupAndExit(): Promise<void> {
   if (ramUserData) {
     rmSync(ramUserData, { recursive: true, force: true })
   }
+  // Release the single-instance socket so the next launch doesn't have to
+  // detect it as stale (it would recover anyway — see single-instance.ts).
+  instanceLock?.release()
   // Hard exit, not app.quit() — app.exit() is immediate and skips will-quit,
   // so all cleanup must be awaited inline before calling it (ADR 0002 / threat-model §3).
   app.exit(0)
@@ -824,9 +862,30 @@ app.on('login', (event, webContents, _details, authInfo, callback) => {
   })
 })
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (relaunching) return // this instance only exists to re-exec with the cache env set
   if (process.platform === 'linux') sweepStaleShmDirs()
+  // The lock lives on tmpfs like everything else; a second launch hands its
+  // URLs to the running instance and exits. Skipped under automation for the
+  // same reason as the relaunch bootstrap: Playwright and dev instances own
+  // their process lifecycles. getuid always exists on Linux.
+  if (process.platform === 'linux' && !automated) {
+    const uid = process.getuid!()
+    instanceLock = await acquireSingleInstance({
+      lockDir: defaultLockDir(uid),
+      uid,
+      argv: process.argv.slice(1),
+      onSecondInstance
+    })
+    if (!instanceLock.acquired) {
+      // URLs delivered to the running instance. Remove this launch's tmpfs
+      // dir before exiting — nothing was browsed, but the bootstrap created
+      // it, and cleanupAndExit never runs on this path.
+      if (ramUserData) rmSync(ramUserData, { recursive: true, force: true })
+      app.exit(0)
+      return
+    }
+  }
   configureSession()
   registerIpcHandlers()
   createWindow()
