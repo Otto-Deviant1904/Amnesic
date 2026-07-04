@@ -1,9 +1,9 @@
 {
   "name": "amnesic-browser",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "A tabbed desktop browser engineered to leave nothing recoverable on disk after the process exits.",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "author": {
     "name": "OttoDev"
   },

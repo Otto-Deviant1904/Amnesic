@@ -1,0 +1,23 @@
+pkgbase = amnesic-browser-bin
+	pkgdesc = A tabbed desktop browser engineered to leave nothing recoverable on disk after the process exits
+	pkgver = 0.1.1
+	pkgrel = 1
+	url = https://github.com/Otto-Deviant1904/Amnesic
+	arch = x86_64
+	license = MIT
+	depends = gtk3
+	depends = nss
+	depends = alsa-lib
+	depends = libxss
+	depends = libxtst
+	depends = at-spi2-core
+	optdepends = fuse2: run the AppImage directly without --appimage-extract-and-run
+	provides = amnesic-browser
+	conflicts = amnesic-browser
+	options = !strip
+	source = amnesic-browser-bin-0.1.1.AppImage::https://github.com/Otto-Deviant1904/Amnesic/releases/download/v0.1.1/amnesic-browser-0.1.1-x86_64.AppImage
+	source = LICENSE-0.1.1::https://github.com/Otto-Deviant1904/Amnesic/raw/v0.1.1/LICENSE
+	sha256sums = e170b5b32aed1fa149a522d6b51e95feec40db53ce4c1f6e5cba9510c79f1742
+	sha256sums = 8798574bd639aca62213384c7ec619cf4fb7199c4f532ac2cc881f432c121bf0
+
+pkgname = amnesic-browser-bin

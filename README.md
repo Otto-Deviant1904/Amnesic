@@ -1,3 +1,7 @@
+<p align="center">
+  <img src=".github/assets/logo.png" alt="Amnesic — Browse. Live. Leave nothing." width="360">
+</p>
+
 # Amnesic Browser
 
 A desktop app that behaves like a normal tabbed browser but is engineered so
@@ -119,4 +123,4 @@ explicitly out of scope and require explicit approval before being added.
 
 ## License
 
-[MIT](LICENSE)
+[APACHE 2.0](LICENSE)

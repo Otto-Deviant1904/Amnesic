@@ -1,0 +1,51 @@
+# Maintainer: OttoDev
+pkgname=amnesic-browser-bin
+pkgver=0.1.1
+pkgrel=1
+pkgdesc="A tabbed desktop browser engineered to leave nothing recoverable on disk after the process exits"
+arch=('x86_64')
+url="https://github.com/Otto-Deviant1904/Amnesic"
+license=('MIT')
+depends=('gtk3' 'nss' 'alsa-lib' 'libxss' 'libxtst' 'at-spi2-core')
+optdepends=('fuse2: run the AppImage directly without --appimage-extract-and-run')
+provides=('amnesic-browser')
+conflicts=('amnesic-browser')
+options=('!strip')
+source=(
+  "$pkgname-$pkgver.AppImage::$url/releases/download/v$pkgver/amnesic-browser-$pkgver-x86_64.AppImage"
+  "LICENSE-$pkgver::$url/raw/v$pkgver/LICENSE"
+)
+sha256sums=(
+  'e170b5b32aed1fa149a522d6b51e95feec40db53ce4c1f6e5cba9510c79f1742'
+  '8798574bd639aca62213384c7ec619cf4fb7199c4f532ac2cc881f432c121bf0'
+)
+
+package() {
+  install -Dm755 "$pkgname-$pkgver.AppImage" "$pkgdir/opt/$pkgname/amnesic-browser.AppImage"
+
+  # Icon and .desktop file are bundled inside the AppImage's own squashfs
+  # image rather than shipped as separate PKGBUILD sources, so they can
+  # never drift out of sync with the release they're extracted from.
+  "$pkgdir/opt/$pkgname/amnesic-browser.AppImage" --appimage-extract >/dev/null
+
+  install -Dm644 squashfs-root/usr/share/icons/hicolor/128x128/apps/amnesic.png \
+    "$pkgdir/usr/share/icons/hicolor/128x128/apps/amnesic.png"
+  install -Dm644 squashfs-root/usr/share/icons/hicolor/256x256/apps/amnesic.png \
+    "$pkgdir/usr/share/icons/hicolor/256x256/apps/amnesic.png"
+  install -Dm644 squashfs-root/usr/share/icons/hicolor/512x512/apps/amnesic.png \
+    "$pkgdir/usr/share/icons/hicolor/512x512/apps/amnesic.png"
+
+  # The bundled .desktop file's Exec=AppRun %U only resolves inside the
+  # AppImage's own mount; repoint it at the installed, real path.
+  sed "s|^Exec=AppRun|Exec=/opt/$pkgname/amnesic-browser.AppImage|" \
+    squashfs-root/amnesic.desktop > amnesic-browser.desktop
+  install -Dm644 amnesic-browser.desktop "$pkgdir/usr/share/applications/amnesic-browser.desktop"
+
+  cat > amnesic-browser-wrapper <<'EOF'
+#!/bin/sh
+exec /opt/amnesic-browser-bin/amnesic-browser.AppImage "$@"
+EOF
+  install -Dm755 amnesic-browser-wrapper "$pkgdir/usr/bin/amnesic-browser"
+
+  install -Dm644 "LICENSE-$pkgver" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
