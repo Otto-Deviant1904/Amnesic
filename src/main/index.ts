@@ -7,6 +7,7 @@ import {
   type Session,
   type WebContents
 } from 'electron'
+import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
@@ -84,7 +85,27 @@ if (process.platform === 'linux') {
     process.env['AMNESIC_SHM_DIR'] = ramUserData
     process.env['XDG_CACHE_HOME'] = xdgCache
     relaunching = true
-    app.relaunch() // spawns with the current (now-augmented) environment
+    // Deliberately NOT app.relaunch(): on this AppImage packaging it reliably
+    // fails to produce a surviving process — verified empirically (the
+    // relaunched process never reaches this module's own top-level code, so
+    // it dies during Electron/Chromium's native startup, before any JS runs;
+    // a manually spawned process with the identical env survives and runs a
+    // full, healthy process tree). app.relaunch()'s exact failure mode inside
+    // this AppImage wasn't fully root-caused (no strace/coredump available in
+    // the environment this was diagnosed in) — spawning it ourselves sidesteps
+    // whatever internal assumption of Electron's relaunch implementation
+    // doesn't hold here, rather than depending on unverified internals.
+    //
+    // process.execPath is still correct as the exec target here. spawn()
+    // only returns after fork() has completed, so the child process already
+    // exists by the time app.exit() below runs — no dying-FUSE-mount race
+    // like the one app.relaunch()'s (opaque) internal timing was suspected of.
+    const child = spawn(process.execPath, process.argv.slice(1), {
+      env: process.env,
+      detached: true,
+      stdio: 'ignore'
+    })
+    child.unref()
     app.exit(0)
   }
 }
