@@ -53,7 +53,9 @@ body {
 
 /* NOTE: tab-strip (36px) + nav-bar (52px) = 88px must match TOOLBAR_HEIGHT
    in src/main/index.ts, since that's where the WebContentsView bounds are set.
-   The progress bar overlays the boundary and adds no height. */
+   When the find bar is open it adds FIND_BAR_HEIGHT (35px, see App.tsx) and
+   the renderer reports the new total via setChromeHeight. The progress bar
+   overlays the boundary and adds no height. */
 .chrome {
   position: relative;
   flex-shrink: 0;
@@ -130,6 +132,38 @@ body {
   50% {
     opacity: 0.25;
   }
+}
+
+.tab__favicon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+}
+
+.tab__audio {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 17px;
+  height: 17px;
+  border: none;
+  border-radius: 4px;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.tab__audio:hover {
+  opacity: 1;
+  background: var(--border-strong);
+}
+
+.tab__audio--muted {
+  color: var(--text-faint);
 }
 
 .tab__title {
@@ -299,6 +333,213 @@ body {
   background: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
+.zoom-chip {
+  flex-shrink: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  padding: 2px 7px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+
+.zoom-chip:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* ---- Find bar (third chrome row, only while open) ---- */
+
+.find-bar {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 35px;
+  padding: 0 10px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.find-bar__input {
+  width: 220px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 8px;
+  background: var(--bg-inset);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  outline: none;
+  user-select: text;
+}
+
+.find-bar__input:focus {
+  border-color: var(--accent);
+}
+
+.find-bar__count {
+  min-width: 72px;
+  padding: 0 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.find-bar__button {
+  width: 26px;
+  height: 26px;
+}
+
+/* ---- Shared buttons (error page, auth dialog) ---- */
+
+.button {
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 6px 14px;
+  background: var(--bg-raised);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 80ms ease,
+    border-color 80ms ease;
+}
+
+.button:hover {
+  background: var(--bg-hover);
+}
+
+.button--primary {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border-strong));
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-raised));
+}
+
+.button--primary:hover {
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-raised));
+}
+
+/* ---- Page area (below the chrome; visible when the tab view is hidden) ---- */
+
+.page-area {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* ---- Error page (failed main-frame load; the tab view is hidden) ---- */
+
+.error-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 0 24px 10vh;
+  text-align: center;
+}
+
+.error-page__icon {
+  color: var(--text-faint);
+}
+
+.error-page__title {
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.error-page__detail {
+  margin: 0;
+  max-width: 46ch;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.error-page__code {
+  max-width: 64ch;
+  margin-bottom: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+
+/* ---- HTTP auth dialog (overlays the page area; the tab view is hidden) ---- */
+
+.auth-dialog {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+}
+
+.auth-dialog__card {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  width: 320px;
+  padding: 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  animation: notice-in 150ms ease;
+}
+
+.auth-dialog__title {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.auth-dialog__host {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.auth-dialog__note {
+  margin: 0 0 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+
+.auth-dialog__input {
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 9px;
+  background: var(--bg-inset);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  outline: none;
+  user-select: text;
+}
+
+.auth-dialog__input:focus {
+  border-color: var(--accent);
+}
+
+.auth-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
 /* ---- Notices ---- */
 
 .download-notice {
@@ -404,6 +645,7 @@ body {
 .start-page {
   flex: 1;
   display: flex;
+  min-height: 0;
   flex-direction: column;
   align-items: center;
   justify-content: center;

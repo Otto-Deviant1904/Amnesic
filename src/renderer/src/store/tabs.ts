@@ -8,6 +8,8 @@ interface TabsStore {
   upsertTab: (state: TabState) => void
   removeTab: (tabId: string) => void
   setActiveTab: (tabId: string) => void
+  /** Reorder tabs (drag & drop). Ignores lists that aren't a permutation of the current order. */
+  setOrder: (order: string[]) => void
 }
 
 export const useTabsStore = create<TabsStore>((set) => ({
@@ -30,5 +32,11 @@ export const useTabsStore = create<TabsStore>((set) => ({
       const activeTabId = store.activeTabId === tabId ? (order[0] ?? null) : store.activeTabId
       return { tabs: rest, order, activeTabId }
     }),
-  setActiveTab: (tabId) => set({ activeTabId: tabId })
+  setActiveTab: (tabId) => set({ activeTabId: tabId }),
+  setOrder: (order) =>
+    set((store) => {
+      const valid =
+        new Set(order).size === store.order.length && order.every((id) => id in store.tabs)
+      return valid ? { order } : {}
+    })
 }))

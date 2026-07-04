@@ -10,7 +10,14 @@ import {
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { IPC_CHANNELS, type ShellNotice, type TabState } from '../shared/ipc'
+import {
+  IPC_CHANNELS,
+  type AuthCredentials,
+  type ShellNotice,
+  type TabLoadError,
+  type TabState
+} from '../shared/ipc'
+import { attachShellContextMenu, attachTabContextMenu } from './context-menu'
 import { diskBackedSwapDevices } from './swap'
 
 // --- Command-line switches (must be set before app is ready) ---
@@ -104,6 +111,10 @@ interface TabEntry {
   view: WebContentsView
   /** False until the first loadURL — the renderer shows the start page instead. */
   navigated: boolean
+  /** data: URI fetched through the in-memory session; see updateFavicon(). */
+  favicon: string | null
+  /** Set on a failed main-frame load; the renderer shows an error page while set. */
+  error: TabLoadError | null
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -139,10 +150,13 @@ function applySessionMitigations(ses: Session): void {
     })
   })
 
-  // Deny all permission requests by default; v1 has no feature that needs any of them.
-  // 'media' denial is one of three WebRTC leak mitigation layers (ADR 0002).
-  ses.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(false)
+  // Deny all permission requests except HTML5 fullscreen. Fullscreen is a
+  // display-state request, not a privacy surface — it exposes no sensor,
+  // storage, or network capability — and blanket denial broke video
+  // fullscreen on every site (ADR 0005). 'media' denial remains one of
+  // three WebRTC leak mitigation layers (ADR 0002).
+  ses.setPermissionRequestHandler((_webContents, permission, callback) => {
+    callback(permission === 'fullscreen')
   })
 
   // Downloads are a v1 non-goal (CLAUDE.md), but Electron's DEFAULT
@@ -167,27 +181,53 @@ function configureSession(): void {
 
 const TOOLBAR_HEIGHT = 88 // must match the renderer's tab-strip + address-bar height in CSS
 
+// The renderer reports its actual chrome height (it grows when the find bar
+// opens) via SHELL_CHROME_HEIGHT; TOOLBAR_HEIGHT is just the initial value.
+let chromeHeight = TOOLBAR_HEIGHT
+
+// While a page holds HTML5 fullscreen (video etc.) the active view covers the
+// whole window, and the OS window itself goes fullscreen like every browser.
+let htmlFullscreen = false
+let wasWindowFullscreen = false // restore state when HTML fullscreen ends
+
 function layoutActiveView(): void {
   if (!mainWindow || !activeTabId) return
   const entry = tabs.get(activeTabId)
   if (!entry) return
   const bounds = mainWindow.getContentBounds()
+  const top = htmlFullscreen ? 0 : chromeHeight
   entry.view.setBounds({
     x: 0,
-    y: TOOLBAR_HEIGHT,
+    y: top,
     width: bounds.width,
-    height: Math.max(0, bounds.height - TOOLBAR_HEIGHT)
+    height: Math.max(0, bounds.height - top)
   })
+}
+
+// A tab's view is only shown when it has something real to display — the
+// shell's start page (never navigated) or error page (failed load) show
+// through an invisible view instead.
+function viewHasContent(entry: TabEntry): boolean {
+  return entry.navigated && !entry.error
+}
+
+// Leaving the tab that holds HTML5 fullscreen (switch or close) must drop the
+// fullscreen layout itself — 'leave-html-full-screen' never fires for a view
+// that is hidden or destroyed while fullscreen.
+function resetHtmlFullscreen(): void {
+  if (!mainWindow || !htmlFullscreen) return
+  htmlFullscreen = false
+  if (!wasWindowFullscreen) mainWindow.setFullScreen(false)
 }
 
 function setActiveTab(id: string): void {
   if (!mainWindow || !tabs.has(id)) return
+  if (id !== activeTabId) resetHtmlFullscreen()
   const previous = activeTabId ? tabs.get(activeTabId) : null
   if (previous) previous.view.setVisible(false)
   activeTabId = id
   const next = tabs.get(id)
-  // A never-navigated tab stays hidden so the shell's start page shows through.
-  if (next && next.navigated) {
+  if (next && viewHasContent(next)) {
     next.view.setVisible(true)
     layoutActiveView()
   }
@@ -204,9 +244,43 @@ function sendTabUpdate(id: string): void {
     title: wc.getTitle(),
     loading: wc.isLoading(),
     canGoBack: wc.navigationHistory.canGoBack(),
-    canGoForward: wc.navigationHistory.canGoForward()
+    canGoForward: wc.navigationHistory.canGoForward(),
+    favicon: entry.favicon,
+    audible: wc.isCurrentlyAudible(),
+    muted: wc.isAudioMuted(),
+    zoomPercent: Math.round(wc.getZoomFactor() * 100),
+    error: entry.error
   }
   mainWindow.webContents.send(IPC_CHANNELS.TAB_UPDATED, state)
+}
+
+// Favicons are fetched by us (main) through the tab's own in-memory session —
+// NOT by the shell renderer via <img src>, which would make the privileged
+// shell session issue network requests to page-controlled URLs. The result
+// crosses IPC as a size-capped data: URI, so the shell never talks to the
+// network at all (ADR 0005).
+async function updateFavicon(id: string, url: string | undefined): Promise<void> {
+  const entry = tabs.get(id)
+  if (!entry) return
+  if (!url || !isAllowedUrl(url)) {
+    entry.favicon = null
+    sendTabUpdate(id)
+    return
+  }
+  try {
+    const response = await getInMemorySession().fetch(url)
+    if (!response.ok) return
+    const buffer = Buffer.from(await response.arrayBuffer())
+    if (buffer.byteLength === 0 || buffer.byteLength > 256 * 1024) return
+    const contentType = response.headers.get('content-type') ?? ''
+    const mime = contentType.startsWith('image/') ? contentType : 'image/x-icon'
+    const current = tabs.get(id)
+    if (!current) return // tab closed while the favicon was in flight
+    current.favicon = `data:${mime};base64,${buffer.toString('base64')}`
+    sendTabUpdate(id)
+  } catch {
+    /* favicons are cosmetic — a failed fetch just leaves the tab icon-less */
+  }
 }
 
 function activeWebContents(): WebContents | null {
@@ -234,9 +308,16 @@ function selectTabByDigit(digit: number): void {
 
 function adjustZoom(delta: number | null): void {
   const wc = activeWebContents()
-  if (!wc) return
+  if (!wc || !activeTabId) return
   const level = delta === null ? 0 : Math.max(-5, Math.min(5, wc.getZoomLevel() + delta))
   wc.setZoomLevel(level)
+  sendTabUpdate(activeTabId) // the renderer's zoom chip mirrors zoomPercent
+}
+
+function openFindBar(): void {
+  if (!mainWindow) return
+  mainWindow.webContents.focus()
+  mainWindow.webContents.send(IPC_CHANNELS.SHELL_OPEN_FIND)
 }
 
 // Browser-chrome shortcuts, handled in main so they work no matter whether the
@@ -264,6 +345,9 @@ function handleShortcut(input: Electron.Input, source: 'tab' | 'shell'): boolean
           return true
         case 'l':
           focusAddressBar()
+          return true
+        case 'f':
+          openFindBar()
           return true
         case 'r':
           wc?.reload()
@@ -397,6 +481,13 @@ function createTab(url?: string, options: { background?: boolean } = {}): string
   })
 
   attachShortcuts(view.webContents, 'tab')
+  attachTabContextMenu(view.webContents, {
+    openInNewTab: (linkUrl) => {
+      // Same gate as every other way into createTab — a page can put
+      // javascript:/file: URLs in links, and those must never become tabs.
+      if (isAllowedUrl(linkUrl)) createTab(linkUrl, { background: true })
+    }
+  })
 
   const notify = () => sendTabUpdate(id)
   view.webContents.on('did-start-loading', notify)
@@ -404,13 +495,78 @@ function createTab(url?: string, options: { background?: boolean } = {}): string
   view.webContents.on('did-navigate', notify)
   view.webContents.on('did-navigate-in-page', notify)
   view.webContents.on('page-title-updated', notify)
+  view.webContents.on('audio-state-changed', notify)
+
+  view.webContents.on('page-favicon-updated', (_event, favicons) => {
+    void updateFavicon(id, favicons[0])
+  })
+  view.webContents.on('did-navigate', (_event, _url, httpResponseCode) => {
+    const entry = tabs.get(id)
+    if (!entry) return
+    // New document: the old favicon no longer describes this tab.
+    entry.favicon = null
+    // httpResponseCode is -1 for non-HTTP commits. Tabs only ever load
+    // http(s), so -1 here means Chromium committed its internal error page
+    // (which follows did-fail-load — clearing on it would erase the error
+    // state the moment it was set; found the hard way via the e2e test).
+    // A real HTTP commit means any previous failure is over.
+    if (httpResponseCode !== -1) {
+      entry.error = null
+      if (id === activeTabId && viewHasContent(entry)) {
+        entry.view.setVisible(true)
+        layoutActiveView()
+      }
+    }
+  })
+
+  // Failed main-frame loads swap Chromium's grey default error page for an
+  // in-shell one: hide the view (the shell DOM shows through, like the start
+  // page) and hand the renderer the error details. ERR_ABORTED (-3) is not a
+  // failure — it fires for stop(), superseded navigations, and the
+  // will-download cancel. Certificate errors arrive here too (as ERR_CERT_*):
+  // there is deliberately no 'certificate-error' handler, so Electron's
+  // default — reject the connection — stands, and v1 offers no bypass button.
+  view.webContents.on('did-fail-load', (_event, code, description, failedUrl, isMainFrame) => {
+    if (!isMainFrame || code === -3) return
+    const entry = tabs.get(id)
+    if (!entry) return
+    entry.error = { code, description, url: failedUrl }
+    entry.view.setVisible(false)
+    notify()
+  })
+
+  view.webContents.on('found-in-page', (_event, result) => {
+    if (!result.finalUpdate) return // interim updates would make the count flicker
+    mainWindow?.webContents.send(IPC_CHANNELS.FIND_RESULT, {
+      tabId: id,
+      matches: result.matches,
+      activeMatchOrdinal: result.activeMatchOrdinal
+    })
+  })
+
+  // HTML5 fullscreen (allowed by the permission carve-out above): the view
+  // covers the toolbar and the OS window goes fullscreen, like any browser.
+  // Chromium itself handles Esc-to-exit.
+  view.webContents.on('enter-html-full-screen', () => {
+    if (!mainWindow || id !== activeTabId) return
+    htmlFullscreen = true
+    wasWindowFullscreen = mainWindow.isFullScreen()
+    if (!wasWindowFullscreen) mainWindow.setFullScreen(true)
+    layoutActiveView()
+  })
+  view.webContents.on('leave-html-full-screen', () => {
+    if (!mainWindow || !htmlFullscreen) return
+    htmlFullscreen = false
+    if (!wasWindowFullscreen) mainWindow.setFullScreen(false)
+    layoutActiveView()
+  })
 
   const navigated = Boolean(url)
   if (url) view.webContents.loadURL(url)
 
   view.setVisible(false)
   mainWindow.contentView.addChildView(view)
-  tabs.set(id, { view, navigated })
+  tabs.set(id, { view, navigated, favicon: null, error: null })
   if (!options.background) {
     setActiveTab(id)
     if (!navigated) focusAddressBar() // fresh empty tab: start typing immediately
@@ -419,9 +575,48 @@ function createTab(url?: string, options: { background?: boolean } = {}): string
   return id
 }
 
+// HTTP basic/proxy auth challenges intercepted from the 'login' event, keyed
+// by request id, awaiting credentials (or cancel) from the shell's dialog.
+// Held in memory only — clearAuthCache() on exit wipes whatever Chromium
+// caches from a successful login.
+interface PendingAuth {
+  callback: (username?: string, password?: string) => void
+  tabId: string | null
+}
+const pendingAuth = new Map<string, PendingAuth>()
+
+function resolveAuth(requestId: string, credentials: AuthCredentials | null): void {
+  const pending = pendingAuth.get(requestId)
+  if (!pending) return
+  pendingAuth.delete(requestId)
+  try {
+    if (credentials) pending.callback(credentials.username, credentials.password)
+    else pending.callback() // no args = cancel; the site's 401 page renders instead
+  } catch {
+    /* the requesting webContents may already be destroyed */
+  }
+  // The view was hidden while the dialog covered the page area — restore it.
+  if (pending.tabId && pending.tabId === activeTabId) {
+    const entry = tabs.get(pending.tabId)
+    if (entry && viewHasContent(entry)) {
+      entry.view.setVisible(true)
+      layoutActiveView()
+    }
+  }
+}
+
 function closeTab(id: string): void {
   const entry = tabs.get(id)
   if (!entry || !mainWindow) return
+  // A closed tab can't answer its auth challenges; cancel them and tell the
+  // shell to drop the matching dialogs.
+  for (const [requestId, pending] of [...pendingAuth]) {
+    if (pending.tabId === id) {
+      resolveAuth(requestId, null)
+      mainWindow.webContents.send(IPC_CHANNELS.AUTH_CANCELLED, requestId)
+    }
+  }
+  if (id === activeTabId) resetHtmlFullscreen()
   const ids = [...tabs.keys()]
   const index = ids.indexOf(id)
   mainWindow.contentView.removeChildView(entry.view)
@@ -458,9 +653,13 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.TAB_NAVIGATE, (_event, tabId: string, url: string) => {
     const entry = tabs.get(tabId)
     if (!entry || !isAllowedUrl(url)) return
+    const hadError = entry.error !== null
     entry.navigated = true
+    entry.error = null
     entry.view.webContents.loadURL(url)
-    if (tabId === activeTabId) {
+    // Coming from an error page, stay hidden until did-finish-load — showing
+    // now would flash Chromium's stale built-in error page over the shell's.
+    if (tabId === activeTabId && !hadError) {
       entry.view.setVisible(true)
       layoutActiveView()
     }
@@ -476,6 +675,56 @@ function registerIpcHandlers(): void {
   })
   ipcMain.handle(IPC_CHANNELS.TAB_STOP, (_event, tabId: string) => {
     tabs.get(tabId)?.view.webContents.stop()
+  })
+  ipcMain.handle(IPC_CHANNELS.TAB_REORDER, (_event, order: string[]) => {
+    // The Map's insertion order is the tab order (Ctrl+1..9, Ctrl+Tab), so a
+    // drag-reorder rebuilds it. Only accept an exact permutation — anything
+    // else (duplicates, unknown or missing ids) would drop tabs.
+    if (
+      !Array.isArray(order) ||
+      new Set(order).size !== tabs.size ||
+      !order.every((id) => tabs.has(id))
+    ) {
+      return
+    }
+    const reordered = order.map((id) => [id, tabs.get(id)!] as const)
+    tabs.clear()
+    for (const [id, entry] of reordered) tabs.set(id, entry)
+  })
+  ipcMain.handle(IPC_CHANNELS.TAB_TOGGLE_MUTE, (_event, tabId: string) => {
+    const wc = tabs.get(tabId)?.view.webContents
+    if (!wc) return
+    wc.setAudioMuted(!wc.isAudioMuted())
+    sendTabUpdate(tabId)
+  })
+  ipcMain.handle(IPC_CHANNELS.TAB_ZOOM_RESET, (_event, tabId: string) => {
+    if (tabId === activeTabId) adjustZoom(null)
+  })
+  ipcMain.handle(
+    IPC_CHANNELS.FIND_START,
+    (_event, tabId: string, text: string, forward: boolean, findNext: boolean) => {
+      const wc = tabs.get(tabId)?.view.webContents
+      if (!wc || typeof text !== 'string' || text.length === 0) return
+      wc.findInPage(text, { forward, findNext })
+    }
+  )
+  ipcMain.handle(IPC_CHANNELS.FIND_STOP, (_event, tabId: string, keepSelection: boolean) => {
+    tabs
+      .get(tabId)
+      ?.view.webContents.stopFindInPage(keepSelection ? 'keepSelection' : 'clearSelection')
+  })
+  ipcMain.handle(
+    IPC_CHANNELS.AUTH_RESPONSE,
+    (_event, requestId: string, credentials: AuthCredentials | null) => {
+      resolveAuth(requestId, credentials)
+    }
+  )
+  ipcMain.handle(IPC_CHANNELS.SHELL_CHROME_HEIGHT, (_event, px: number) => {
+    // Bounds-check: a bogus height from a compromised shell renderer could
+    // otherwise shove the page view off-window.
+    if (typeof px !== 'number' || !Number.isFinite(px) || px < 44 || px > 320) return
+    chromeHeight = Math.round(px)
+    layoutActiveView()
   })
 }
 
@@ -515,6 +764,7 @@ function createWindow(): void {
 
   mainWindow.on('resize', layoutActiveView)
   attachShortcuts(mainWindow.webContents, 'shell')
+  attachShellContextMenu(mainWindow.webContents)
 
   if (process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -554,6 +804,25 @@ async function cleanupAndExit(): Promise<void> {
   // so all cleanup must be awaited inline before calling it (ADR 0002 / threat-model §3).
   app.exit(0)
 }
+
+// HTTP basic/proxy auth. Unhandled, Electron cancels the auth and the site
+// silently fails; instead, hold the challenge open and ask the user through
+// an in-shell dialog. The requesting view is hidden while the dialog is up
+// because the shell's DOM cannot render above a WebContentsView.
+app.on('login', (event, webContents, _details, authInfo, callback) => {
+  if (!mainWindow) return // no UI to ask through — let Electron cancel it
+  event.preventDefault()
+  const requestId = randomUUID()
+  const tabId = [...tabs.entries()].find(([, e]) => e.view.webContents === webContents)?.[0] ?? null
+  pendingAuth.set(requestId, { callback, tabId })
+  if (tabId && tabId === activeTabId) tabs.get(tabId)?.view.setVisible(false)
+  mainWindow.webContents.send(IPC_CHANNELS.AUTH_REQUEST, {
+    requestId,
+    host: authInfo.host,
+    realm: authInfo.realm,
+    isProxy: authInfo.isProxy
+  })
+})
 
 app.whenReady().then(() => {
   if (relaunching) return // this instance only exists to re-exec with the cache env set

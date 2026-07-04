@@ -10,6 +10,11 @@ function makeTab(overrides: Partial<TabState> = {}): TabState {
     loading: false,
     canGoBack: false,
     canGoForward: false,
+    favicon: null,
+    audible: false,
+    muted: false,
+    zoomPercent: 100,
+    error: null,
     ...overrides
   }
 }
@@ -34,6 +39,23 @@ describe('useTabsStore', () => {
     expect(state.order).toEqual(['tab-1'])
     expect(state.tabs['tab-1']?.title).toBe('Updated')
     expect(state.tabs['tab-1']?.loading).toBe(true)
+  })
+
+  it('reorders tabs when given a permutation of the current order', () => {
+    useTabsStore.getState().upsertTab(makeTab({ tabId: 'tab-1' }))
+    useTabsStore.getState().upsertTab(makeTab({ tabId: 'tab-2' }))
+    useTabsStore.getState().upsertTab(makeTab({ tabId: 'tab-3' }))
+    useTabsStore.getState().setOrder(['tab-3', 'tab-1', 'tab-2'])
+    expect(useTabsStore.getState().order).toEqual(['tab-3', 'tab-1', 'tab-2'])
+  })
+
+  it('rejects orders with unknown, missing, or duplicate ids', () => {
+    useTabsStore.getState().upsertTab(makeTab({ tabId: 'tab-1' }))
+    useTabsStore.getState().upsertTab(makeTab({ tabId: 'tab-2' }))
+    useTabsStore.getState().setOrder(['tab-1', 'tab-nope'])
+    useTabsStore.getState().setOrder(['tab-1'])
+    useTabsStore.getState().setOrder(['tab-1', 'tab-1'])
+    expect(useTabsStore.getState().order).toEqual(['tab-1', 'tab-2'])
   })
 
   it('removes a tab and falls back active selection to the next remaining tab', () => {

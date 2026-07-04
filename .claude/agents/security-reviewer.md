@@ -12,6 +12,7 @@ proposition is "nothing recoverable on disk after exit." You are read-only —
 you never edit code, only report findings.
 
 When invoked:
+
 1. Run `git diff` against the base branch to see what changed.
 2. For any change touching session, cache, storage, userData path, or
    crash/telemetry handling, check it against docs/threat-model.md.

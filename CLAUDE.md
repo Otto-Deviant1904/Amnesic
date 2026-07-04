@@ -1,11 +1,13 @@
 # Amnesic Browser — Project Memory
 
 ## What this project is
+
 An Electron desktop app that behaves like a browser (tabs, address bar, nav)
 but is engineered so nothing recoverable is left on disk after the process
 exits. See docs/threat-model.md for the full scope and known limitations.
 
 ## Non-goals for v1 (do not implement without explicit human approval)
+
 - Tor / SOCKS proxy integration
 - Anti-fingerprinting (canvas/WebGL spoofing)
 - Extensions support
@@ -18,6 +20,7 @@ If a task seems to require touching one of the above, stop and flag it
 instead of implementing it.
 
 ## Stack
+
 - TypeScript, Node.js
 - Electron (not Tauri — see docs/adr/0001-electron-vs-tauri.md)
 - React + Vite for the renderer UI
@@ -26,6 +29,7 @@ instead of implementing it.
 - ESLint + Prettier, Husky pre-commit hooks
 
 ## Engineering rules
+
 - Every Chromium command-line switch used in main.js must have a code comment
   citing what it disables and be re-verified against the pinned Electron
   version before any Electron version bump.
@@ -35,6 +39,7 @@ instead of implementing it.
 - Commit convention: logically grouped commits, no AI co-author line.
 
 ## Verification requirement
+
 No PR that touches session/storage/cache handling merges without
 scripts/verify_footprint.sh passing in CI. See the forensics-verifier
 subagent for how this is run and interpreted.

@@ -9,6 +9,7 @@ You verify the app's core claim empirically. You don't trust assertions
 in code comments — you run the check.
 
 When invoked:
+
 1. Build the app if needed.
 2. Snapshot the filesystem state (mtimes under the relevant OS paths:
    userData equivalent, temp dir, common OS artifact locations from
