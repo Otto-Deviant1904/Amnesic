@@ -116,3 +116,13 @@ export function WarningIcon(props: IconProps) {
     </Svg>
   )
 }
+
+export function MaskIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M2 6.25c1.15-1.7 3.1-2.6 6-2.6s4.85.9 6 2.6c-.3 3.35-2.15 5.85-4.35 5.85-.9 0-1.15-.65-1.65-.65s-.75.65-1.65.65C4.15 12.1 2.3 9.6 2 6.25z" />
+      <circle cx="5.85" cy="6.75" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="10.15" cy="6.75" r="0.9" fill="currentColor" stroke="none" />
+    </Svg>
+  )
+}

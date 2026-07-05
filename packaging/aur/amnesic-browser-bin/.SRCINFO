@@ -1,10 +1,10 @@
 pkgbase = amnesic-browser-bin
 	pkgdesc = A tabbed desktop browser engineered to leave nothing recoverable on disk after the process exits
-	pkgver = 0.1.1
+	pkgver = 0.1.2
 	pkgrel = 1
 	url = https://github.com/Otto-Deviant1904/Amnesic
 	arch = x86_64
-	license = MIT
+	license = Apache-2.0
 	depends = gtk3
 	depends = nss
 	depends = alsa-lib
@@ -15,9 +15,9 @@ pkgbase = amnesic-browser-bin
 	provides = amnesic-browser
 	conflicts = amnesic-browser
 	options = !strip
-	source = amnesic-browser-bin-0.1.1.AppImage::https://github.com/Otto-Deviant1904/Amnesic/releases/download/v0.1.1/amnesic-browser-0.1.1-x86_64.AppImage
-	source = LICENSE-0.1.1::https://github.com/Otto-Deviant1904/Amnesic/raw/v0.1.1/LICENSE
-	sha256sums = e170b5b32aed1fa149a522d6b51e95feec40db53ce4c1f6e5cba9510c79f1742
-	sha256sums = 8798574bd639aca62213384c7ec619cf4fb7199c4f532ac2cc881f432c121bf0
+	source = amnesic-browser-bin-0.1.2.AppImage::https://github.com/Otto-Deviant1904/Amnesic/releases/download/v0.1.2/amnesic-browser-0.1.2-x86_64.AppImage
+	source = LICENSE-0.1.2::https://github.com/Otto-Deviant1904/Amnesic/raw/v0.1.2/LICENSE
+	sha256sums = 527096b4b44426b66f1319431fd7193fb36075fd032d161e209166fa8c744b19
+	sha256sums = c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4
 
 pkgname = amnesic-browser-bin

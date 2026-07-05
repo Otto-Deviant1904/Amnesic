@@ -13,13 +13,28 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:f
 import { join } from 'node:path'
 import {
   IPC_CHANNELS,
+  type AuditCheck,
+  type AuditReport,
   type AuthCredentials,
+  type DnsProviderOption,
+  type DnsResult,
+  type DnsStatus,
   type ShellNotice,
   type TabLoadError,
-  type TabState
+  type TabState,
+  type TorResult,
+  type TorStatus
 } from '../shared/ipc'
 import { attachShellContextMenu, attachTabContextMenu } from './context-menu'
+import { DOH_PROVIDERS, findDohProvider, resolverConfigFor } from './dns'
 import { acquireSingleInstance, defaultLockDir, type SingleInstanceLock } from './single-instance'
+import {
+  DEFAULT_TOR_CONFIG,
+  probeSocks5,
+  proxyRulesFor,
+  validateTorConfig,
+  type TorConfig
+} from './tor'
 import { diskBackedSwapDevices } from './swap'
 
 // --- Command-line switches (must be set before app is ready) ---
@@ -132,7 +147,7 @@ function sweepStaleShmDirs(): void {
   }
 }
 
-const SESSION_PARTITION = 'inmemory-session' // no `persist:` prefix — this is what makes it memory-only
+const SESSION_PARTITION_PREFIX = 'inmemory-session' // no `persist:` prefix — this is what makes it memory-only
 
 interface TabEntry {
   view: WebContentsView
@@ -148,18 +163,61 @@ let mainWindow: BrowserWindow | null = null
 const tabs = new Map<string, TabEntry>() // insertion order doubles as tab order
 let activeTabId: string | null = null
 
-function getInMemorySession() {
-  return session.fromPartition(SESSION_PARTITION, { cache: false })
+// New Identity (ADR 0009) rotates to a brand-new partition name rather than
+// clearing the existing one in place — session.fromPartition() returns the
+// SAME session object for the same name for the app's lifetime, so a new
+// name is what actually abandons the old session object rather than trusting
+// clearStorageData() to be exhaustive. Monotonically increasing and never
+// reused, so a generation number is never revisited within one app run.
+let sessionGeneration = 0
+
+function currentPartitionName(): string {
+  return `${SESSION_PARTITION_PREFIX}-${sessionGeneration}`
 }
 
-// Applied to both the in-memory tab session AND session.defaultSession.
+function getInMemorySession() {
+  return session.fromPartition(currentPartitionName(), { cache: false })
+}
+
+// Tor/SOCKS5 mode (ADR 0007). Session-only state — never persisted, always
+// off on a fresh launch (CLAUDE.md's no-persisted-settings rule). Applied
+// to every session hardenSession() ever touches (below), so a freshly
+// rotated New Identity partition never briefly exists unproxied while Tor
+// is on — New Identity preserves "Tor is on" as an ongoing preference,
+// consistent with Tor Browser's own New Identity (a fresh circuit/session,
+// not a Tor disconnect).
+let torEnabled = false
+let torConfig: TorConfig = DEFAULT_TOR_CONFIG
+
+function torStatus(): TorStatus {
+  return { enabled: torEnabled, host: torConfig.host, port: torConfig.port }
+}
+
+// A bare socks5://host:port with no comma-joined fallback entry and an
+// empty bypass list — the fail-closed shape verified in
+// research/session-and-userdata.md §22. `{ mode: 'direct' }` when Tor is
+// off is explicit rather than relying on Electron's own default, so "no
+// proxy" is never ambient/implicit.
+function currentProxyConfig(): Electron.ProxyConfig {
+  return torEnabled
+    ? { proxyRules: proxyRulesFor(torConfig), proxyBypassRules: '' }
+    : { mode: 'direct' }
+}
+
+// Applied to both the in-memory tab session AND session.defaultSession, and
+// re-applied to the new session object every time New Identity rotates the
+// partition (ADR 0009) — the single function both paths call so hardening
+// can never diverge between "fresh start" and "mid-session reset". Never
+// call session.fromPartition() elsewhere and skip this: an unhardened
+// session backing a tab is a silent regression of every row in
+// docs/threat-model.md's mitigation table that lives at the session level.
 // defaultSession backs the shell BrowserWindow (tab strip/address bar UI) and
 // is used by Electron for anything not explicitly assigned a session — it
 // previously went unmitigated even though nothing untrusted should load
 // there, which security review flagged as a real parity gap against
 // docs/threat-model.md's mitigation table (a future bug that let untrusted
 // content reach defaultSession would otherwise be unprotected).
-function applySessionMitigations(ses: Session): void {
+async function hardenSession(ses: Session): Promise<void> {
   ses.setSpellCheckerEnabled(false)
 
   // Referrer suppression — replaces the dead `no-referrers` switch (ADR 0002).
@@ -195,15 +253,115 @@ function applySessionMitigations(ses: Session): void {
     event.preventDefault()
     sendNotice({ kind: 'download-blocked', detail: item.getFilename() })
   })
+
+  // Every session this function ever touches is brand new (never had a
+  // request in flight), so there's nothing to closeAllConnections() here —
+  // that only matters for the live, explicit toggle (setTorEnabled below).
+  await ses.setProxy(currentProxyConfig())
 }
 
 function sendNotice(notice: ShellNotice): void {
   mainWindow?.webContents.send(IPC_CHANNELS.SHELL_NOTICE, notice)
 }
 
-function configureSession(): void {
-  applySessionMitigations(getInMemorySession())
-  applySessionMitigations(session.defaultSession)
+async function configureSession(): Promise<void> {
+  await hardenSession(getInMemorySession())
+  await hardenSession(session.defaultSession)
+}
+
+// "No tabs open" (ADR 0007 decision 7) means no tab has ever loaded real
+// content — not literally zero tabs in the Map, which this app never has
+// (closing the last tab quits the app entirely; there is no "zero tabs,
+// blank window" state to gate on). The risk decision 7 guards against is a
+// page keeping in-flight requests on a stale route while the UI claims a
+// new one — a tab still showing the start page has no content and nothing
+// in flight, so it's harmless to change the proxy under it.
+function hasNavigatedTab(): boolean {
+  return [...tabs.values()].some((entry) => entry.navigated)
+}
+
+// Explicit Tor toggle (ADR 0007 decisions 4 and 7). Only when no tab has
+// navigated anywhere yet — a proxy setting that changes while a tab might
+// be relying on the old route is worse than no proxy at all. Enabling
+// requires a successful SOCKS5 handshake probe first; a listener that
+// isn't actually speaking SOCKS5 must never be treated as "Tor is on".
+async function setTorEnabled(next: boolean): Promise<TorResult> {
+  if (hasNavigatedTab()) {
+    return { ok: false, error: 'Close all tabs before changing Tor mode', status: torStatus() }
+  }
+  if (next === torEnabled) return { ok: true, status: torStatus() }
+  if (next) {
+    const reachable = await probeSocks5(torConfig)
+    if (!reachable) {
+      return {
+        ok: false,
+        error: `Could not reach a SOCKS5 proxy at ${torConfig.host}:${torConfig.port}`,
+        status: torStatus()
+      }
+    }
+  }
+  torEnabled = next
+  const ses = getInMemorySession()
+  const config = currentProxyConfig()
+  await ses.setProxy(config)
+  await session.defaultSession.setProxy(config)
+  // Stale pooled sockets on the old route must not be reused after the
+  // config changes (session.setProxy()'s own docs call this out).
+  await ses.closeAllConnections()
+  await session.defaultSession.closeAllConnections()
+  return { ok: true, status: torStatus() }
+}
+
+// Config edits are only allowed while Tor is off — editing the host/port
+// behind a live, already-proxied session is exactly the kind of change
+// decision 7 exists to prevent; disable first, reconfigure, then re-enable
+// (which re-probes against the new endpoint).
+function setTorConfig(host: string, port: number): TorResult {
+  if (torEnabled) {
+    return {
+      ok: false,
+      error: 'Disable Tor before changing its configuration',
+      status: torStatus()
+    }
+  }
+  const error = validateTorConfig(host, port)
+  if (error) return { ok: false, error, status: torStatus() }
+  torConfig = { host, port }
+  return { ok: true, status: torStatus() }
+}
+
+// DNS-over-HTTPS provider selection (ADR 0010). Session-only state — never
+// persisted, always off (null) on a fresh launch, same rule as Tor above.
+// This is independent of Tor's proxy: app.configureHostResolver() is a
+// separate, app-wide Chromium network-service setting that only governs
+// the local resolver path, not requests already routed through a SOCKS5
+// proxy (those resolve at the proxy regardless of this setting — ADR 0007
+// decision 3). The two features are not mutually exclusive in code; they
+// are made mutually exclusive in the UI (see DnsControl.tsx) because
+// changing DNS provider while Tor is on has no visible effect on proxied
+// tab traffic and would be confusing to expose as if it did.
+let dohProviderId: string | null = null
+
+function dnsStatus(): DnsStatus {
+  return { providerId: dohProviderId, torEnabled }
+}
+
+// Must be called after 'ready' per Electron's docs; safe to call again
+// later to change the mode — verified empirically (research/session-and-
+// userdata.md §23), since Electron's docs don't say whether a repeat call
+// is honored, ignored, or an error, and this project doesn't assume
+// undocumented behavior without checking.
+function applyHostResolver(): void {
+  app.configureHostResolver(resolverConfigFor(dohProviderId))
+}
+
+function setDnsProvider(providerId: string | null): DnsResult {
+  if (providerId !== null && !findDohProvider(providerId)) {
+    return { ok: false, error: `Unknown DNS provider: ${providerId}`, status: dnsStatus() }
+  }
+  dohProviderId = providerId
+  applyHostResolver()
+  return { ok: true, status: dnsStatus() }
 }
 
 const TOOLBAR_HEIGHT = 88 // must match the renderer's tab-strip + address-bar height in CSS
@@ -407,6 +565,17 @@ function handleShortcut(input: Electron.Input, source: 'tab' | 'shell'): boolean
       }
       if (key === '+' || key === '=') {
         adjustZoom(0.5)
+        return true
+      }
+      if (key === 'q') {
+        // Panic key: same cleanupAndExit() as window-all-closed/before-quit —
+        // one wipe routine, reached from every input source that can carry
+        // it (research/cleanup-and-exit.md §19).
+        void cleanupAndExit()
+        return true
+      }
+      if (key === 'n') {
+        void newIdentity()
         return true
       }
     }
@@ -632,7 +801,7 @@ function resolveAuth(requestId: string, credentials: AuthCredentials | null): vo
   }
 }
 
-function closeTab(id: string): void {
+function closeTab(id: string, options: { quitOnEmpty?: boolean } = {}): void {
   const entry = tabs.get(id)
   if (!entry || !mainWindow) return
   // A closed tab can't answer its auth challenges; cancel them and tell the
@@ -659,7 +828,42 @@ function closeTab(id: string): void {
   }
   // Closing the last tab closes the window, which triggers the wipe-and-exit
   // path below — coherent with the product promise: nothing lingers.
-  if (tabs.size === 0) mainWindow.close()
+  // New Identity (ADR 0009) closes every tab down to zero on purpose without
+  // wanting the app to quit, so it passes quitOnEmpty: false.
+  if (tabs.size === 0 && (options.quitOnEmpty ?? true)) mainWindow.close()
+}
+
+// New Identity: forensically fresh session mid-run, no app restart (ADR
+// 0009). Every existing tab is destroyed (closeTab, not just hidden — their
+// WebContentsViews are still bound to the session being abandoned) and the
+// in-memory partition is rotated to a new name rather than cleared in place,
+// so the old session object is dropped entirely rather than trusted to have
+// been exhaustively cleared. The old session is still explicitly cleared
+// first — the same immediate, awaited pattern cleanupAndExit uses — so
+// Chromium drops its own references and the allocator can reclaim before GC
+// would otherwise get around to it (threat-model.md §3).
+let identityResetInProgress = false
+
+async function newIdentity(): Promise<void> {
+  if (!mainWindow || identityResetInProgress) return
+  identityResetInProgress = true
+  try {
+    const oldSession = getInMemorySession()
+    for (const id of [...tabs.keys()]) {
+      closeTab(id, { quitOnEmpty: false })
+    }
+    await oldSession.clearStorageData()
+    await oldSession.clearCache()
+    await oldSession.clearAuthCache()
+
+    sessionGeneration += 1
+    await hardenSession(getInMemorySession())
+
+    createTab()
+    sendNotice({ kind: 'identity-reset', detail: '' })
+  } finally {
+    identityResetInProgress = false
+  }
 }
 
 function registerIpcHandlers(): void {
@@ -728,6 +932,20 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.TAB_ZOOM_RESET, (_event, tabId: string) => {
     if (tabId === activeTabId) adjustZoom(null)
   })
+  ipcMain.handle(IPC_CHANNELS.IDENTITY_NEW, () => newIdentity())
+  ipcMain.handle(IPC_CHANNELS.AUDIT_REQUEST, (): AuditReport => buildAuditReport())
+  ipcMain.handle(IPC_CHANNELS.TOR_GET_STATUS, (): TorStatus => torStatus())
+  ipcMain.handle(IPC_CHANNELS.TOR_SET_ENABLED, (_event, enabled: boolean) => setTorEnabled(enabled))
+  ipcMain.handle(IPC_CHANNELS.TOR_SET_CONFIG, (_event, host: string, port: number): TorResult =>
+    setTorConfig(host, port)
+  )
+  ipcMain.handle(IPC_CHANNELS.DNS_GET_STATUS, (): DnsStatus => dnsStatus())
+  ipcMain.handle(IPC_CHANNELS.DNS_SET_PROVIDER, (_event, providerId: string | null): DnsResult =>
+    setDnsProvider(providerId)
+  )
+  ipcMain.handle(IPC_CHANNELS.DNS_LIST_PROVIDERS, (): DnsProviderOption[] =>
+    DOH_PROVIDERS.map(({ id, label }) => ({ id, label }))
+  )
   ipcMain.handle(
     IPC_CHANNELS.FIND_START,
     (_event, tabId: string, text: string, forward: boolean, findNext: boolean) => {
@@ -771,6 +989,170 @@ function checkSwap(): void {
   } catch {
     /* no /proc/swaps — nothing to warn about */
   }
+}
+
+// Self-audit panel (start page) — turns the CI-only trust story user-facing.
+// Every row here runs in the main process; the shell only ever receives this
+// plain, serializable result over the existing IPC bridge (no new capability
+// crosses into the renderer). Each row's `verifiedAtRuntime` must be honest:
+// true only for checks actually performed in this running process just now,
+// false for guarantees that only a CI lint rule enforces — conflating the two
+// would be exactly the overselling this project exists to avoid.
+//
+// Parses /proc/mounts to find the filesystem type backing a path — same
+// "longest matching mount point wins" logic the kernel itself uses, since a
+// path can sit under several nested mounts (e.g. / then /dev then /dev/shm).
+function mountFsType(mountsContent: string, targetPath: string): string | null {
+  let best: { mountPoint: string; fsType: string } | null = null
+  for (const line of mountsContent.split('\n')) {
+    const fields = line.split(' ')
+    if (fields.length < 3) continue
+    // /proc/mounts octal-escapes spaces and a few other characters in paths.
+    const mountPoint = fields[1]!.replace(/\\040/g, ' ')
+    const fsType = fields[2]!
+    const isUnder = targetPath === mountPoint || targetPath.startsWith(`${mountPoint}/`)
+    if (isUnder && (!best || mountPoint.length > best.mountPoint.length)) {
+      best = { mountPoint, fsType }
+    }
+  }
+  return best?.fsType ?? null
+}
+
+function buildAuditReport(): AuditReport {
+  const userDataPath = app.getPath('userData')
+  const linux = process.platform === 'linux'
+  const checks: AuditCheck[] = []
+
+  checks.push(
+    (() => {
+      if (!linux) {
+        return {
+          id: 'tmpfs',
+          label: 'Session data directory is RAM-backed (tmpfs)',
+          verifiedAtRuntime: false,
+          status: 'warn' as const,
+          detail: 'Only checked on Linux — see docs/threat-model.md §4 for other platforms'
+        }
+      }
+      try {
+        const fsType = mountFsType(readFileSync('/proc/mounts', 'utf8'), userDataPath)
+        return {
+          id: 'tmpfs',
+          label: 'Session data directory is RAM-backed (tmpfs)',
+          verifiedAtRuntime: true,
+          status: fsType === 'tmpfs' ? ('pass' as const) : ('fail' as const),
+          detail: `${userDataPath} is mounted "${fsType ?? 'unknown'}"`
+        }
+      } catch {
+        return {
+          id: 'tmpfs',
+          label: 'Session data directory is RAM-backed (tmpfs)',
+          verifiedAtRuntime: false,
+          status: 'warn' as const,
+          detail: '/proc/mounts was not readable — could not verify this instant'
+        }
+      }
+    })()
+  )
+
+  checks.push({
+    id: 'userdata-path',
+    label: 'Session data directory is per-instance and present',
+    verifiedAtRuntime: linux,
+    status: !linux
+      ? 'warn'
+      : /^\/dev\/shm\/amnesic-browser-/.test(userDataPath) && existsSync(userDataPath)
+        ? 'pass'
+        : 'fail',
+    detail: linux ? userDataPath : 'Only checked on Linux — see docs/threat-model.md §4'
+  })
+
+  {
+    let swapDevices: string[] = []
+    let swapReadable = false
+    if (linux) {
+      try {
+        swapDevices = diskBackedSwapDevices(readFileSync('/proc/swaps', 'utf8'))
+        swapReadable = true
+      } catch {
+        /* /proc/swaps unreadable — reported below as not runtime-checkable */
+      }
+    }
+    checks.push({
+      id: 'swap',
+      label: 'No disk-backed swap active',
+      verifiedAtRuntime: swapReadable,
+      status: !swapReadable ? 'warn' : swapDevices.length === 0 ? 'pass' : 'warn',
+      detail: !swapReadable
+        ? 'Only checked on Linux, and only when /proc/swaps is readable'
+        : swapDevices.length === 0
+          ? 'No disk-backed swap device found (zram is exempt)'
+          : `Disk-backed swap active: ${swapDevices.join(', ')} — see docs/threat-model.md §4`
+    })
+  }
+
+  checks.push({
+    id: 'crash-reporter',
+    label: 'Crash reporter never started',
+    // Electron 43's CrashReporter API has no boolean/status getter for
+    // "has start() been called" (research/cleanup-and-exit.md §21) — the
+    // only honest thing to show here is that this is a build-time guarantee,
+    // not something this panel actually checked just now.
+    verifiedAtRuntime: false,
+    status: 'pass',
+    detail:
+      'No Electron 43 runtime signal exists for this. Enforced by a CI lint rule that bans ' +
+      "the crash reporter's start call anywhere in src/ — see docs/threat-model.md §2 and ADR 0002."
+  })
+
+  const httpCacheDisabled = app.commandLine.hasSwitch('disable-http-cache')
+  checks.push({
+    id: 'http-cache',
+    label: 'HTTP disk cache disabled',
+    verifiedAtRuntime: true,
+    status: httpCacheDisabled ? 'pass' : 'fail',
+    detail: httpCacheDisabled
+      ? 'The disable-http-cache command-line switch is active'
+      : 'disable-http-cache switch not found — this should never happen'
+  })
+
+  const partitionName = currentPartitionName()
+  checks.push({
+    id: 'partition',
+    label: 'Tab session partition is non-persistent',
+    verifiedAtRuntime: true,
+    status: partitionName.startsWith('persist:') ? 'fail' : 'pass',
+    detail: `Actual partition name: "${partitionName}" (no persist: prefix)`
+  })
+
+  const downloadHandlerAttached = getInMemorySession().listenerCount('will-download') > 0
+  checks.push({
+    id: 'downloads',
+    label: 'Downloads are cancelled, not saved to disk',
+    verifiedAtRuntime: true,
+    status: downloadHandlerAttached ? 'pass' : 'fail',
+    detail: downloadHandlerAttached
+      ? 'A will-download handler is attached and unconditionally cancels every download — ' +
+        'a real download attempt is exercised end-to-end by scripts/footprint-session.mjs, ' +
+        'not by this panel.'
+      : 'No will-download handler is attached — this should never happen'
+  })
+
+  const xdgCacheHome = process.env['XDG_CACHE_HOME']
+  const xdgInsideTmpfs = Boolean(
+    linux && ramUserData && xdgCacheHome && xdgCacheHome.startsWith(ramUserData)
+  )
+  checks.push({
+    id: 'xdg-cache',
+    label: 'Non-Chromium child-process caches (Mesa, fontconfig) redirected into tmpfs',
+    verifiedAtRuntime: linux,
+    status: !linux ? 'warn' : xdgInsideTmpfs ? 'pass' : 'fail',
+    detail: linux
+      ? `XDG_CACHE_HOME=${xdgCacheHome ?? '(unset)'}`
+      : 'Linux-only mitigation — see docs/threat-model.md §4'
+  })
+
+  return { checks }
 }
 
 // --- Single-instance lock (see src/main/single-instance.ts and ADR 0006) ---
@@ -907,7 +1289,8 @@ app.whenReady().then(async () => {
       return
     }
   }
-  configureSession()
+  await configureSession()
+  applyHostResolver() // off (automatic) by default — see ADR 0010
   registerIpcHandlers()
   createWindow()
 })

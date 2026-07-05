@@ -8,7 +8,6 @@ exits. See docs/threat-model.md for the full scope and known limitations.
 
 ## Non-goals for v1 (do not implement without explicit human approval)
 
-- Tor / SOCKS proxy integration
 - Anti-fingerprinting (canvas/WebGL spoofing)
 - Extensions support
 - Bookmarks
@@ -18,6 +17,10 @@ exits. See docs/threat-model.md for the full scope and known limitations.
 
 If a task seems to require touching one of the above, stop and flag it
 instead of implementing it.
+
+(Tor/SOCKS proxy integration and DNS-over-HTTPS were on this list; both
+were approved by the owner and implemented — see ADR 0007 and ADR 0010.
+Anti-fingerprinting remains a distinct, separately-gated non-goal.)
 
 ## Stack
 

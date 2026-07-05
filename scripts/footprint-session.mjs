@@ -4,7 +4,9 @@
 // tempt every persistence mechanism the threat model claims to neutralize:
 // persistent cookies, localStorage, sessionStorage, IndexedDB, the Cache
 // API, and an attempted file download. Everything is served from a local
-// HTTP server so the run is hermetic — no external network.
+// HTTP server so the run is hermetic — no external network. It also fires
+// New Identity mid-session (ADR 0009) — a new subsystem must be exercised
+// here to be a guarantee rather than an assertion (CLAUDE.md).
 //
 // The filesystem diffing is the calling shell script's job. This script's
 // own assertions are the ones that need the app's pid: the tmpfs userData
@@ -108,9 +110,38 @@ for (let i = 0; i < 2; i++) {
   }
 }
 
+// New Identity mid-session (ADR 0009): closes both tabs above and rotates to
+// a freshly hardened partition. Only the in-memory session is torn down —
+// the tmpfs userData directory itself must survive; only cleanupAndExit at
+// final exit removes it. Fired via sendInputEvent on the shell's own
+// webContents, not window.keyboard.press — Playwright's CDP-driven keyboard
+// never reaches Electron's before-input-event, which is where this
+// shift-combo is exclusively handled (research/cleanup-and-exit.md §20).
+await app.evaluate(({ BrowserWindow }) => {
+  const win = BrowserWindow.getAllWindows()[0]
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'N', modifiers: ['control', 'shift'] })
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'N', modifiers: ['control', 'shift'] })
+})
+await window.waitForSelector('.start-page', { timeout: 10000 })
+if (!fs.existsSync(shmDir)) {
+  fail('tmpfs userData dir was removed by New Identity — only final exit may remove it')
+}
+if ((await window.locator('.tab').count()) !== 1) {
+  fail('New Identity did not leave exactly one fresh tab open')
+}
+
+// Prove the rotated session is still fully functional and hardened by
+// repeating the storage-exercising navigation in the one remaining tab.
+await window.focus('.address-bar__input')
+await window.keyboard.type(`localhost:${port}/page2`)
+await window.keyboard.press('Enter')
+await window.waitForSelector('.tab--active .tab__title:has-text("Footprint Probe Ready")', {
+  timeout: 15000
+})
+
 // Attempt a download; the app must cancel it and show the notice.
 await app.evaluate(async ({ webContents }) => {
-  const wc = webContents.getAllWebContents().find((w) => w.getURL().includes('/page1'))
+  const wc = webContents.getAllWebContents().find((w) => w.getURL().includes('/page2'))
   await wc.executeJavaScript('document.getElementById("dl").click()')
 })
 await window

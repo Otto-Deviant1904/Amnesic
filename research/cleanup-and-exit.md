@@ -39,3 +39,42 @@ Sources: `https://www.electronjs.org/docs/latest/api/app`, `https://www.electron
 - `nodeIntegration`: docs confirm "Default is `false`." Also already off by default.
 - **Recommendation:** keep explicit `sandbox: true, contextIsolation: true, nodeIntegration: false` in the `BrowserWindow` constructor anyway — not because Electron 43 needs it to function correctly, but because (a) it's self-documenting for a privacy/security portfolio project where the README explicitly wants to show "here's the exact list of flags we set, verify it yourself," and (b) an explicit setting survives future Electron defaults changes or a contributor's local override more safely than relying on implicit defaults. This is a case where the plan's over-caution is harmless and worth keeping for narrative/audit reasons even though it's not strictly load-bearing on v43.
 - Source: https://www.electronjs.org/docs/latest/api/browser-window
+
+## 19. Which mechanism actually delivers the panic key (`Ctrl+Shift+Q`) regardless of focus
+
+**Verified: `before-input-event`, already wired for every existing shortcut, is sufficient — no `Menu`/accelerator table needed.**
+
+- The codebase has no `Menu.setApplicationMenu()` call anywhere (grepped `src/`); `autoHideMenuBar: true` only hides Electron's default menu bar, it doesn't construct a custom one with `accelerator` strings. Introducing a `Menu` solely to carry one global shortcut would be new subsystem surface (with its own Linux GTK/Wayland accelerator-dispatch quirks) duplicating what the existing mechanism already does.
+- Every existing browser-chrome shortcut (`Ctrl+T`, `Ctrl+W`, `Ctrl+L`, `Ctrl+F`, `Ctrl+R`, `Ctrl+1..9`, `Alt+Left/Right`, …) is delivered through `webContents.on('before-input-event', ...)`, attached independently in two places: `attachShortcuts(mainWindow.webContents, 'shell')` in `createWindow()`, and `attachShortcuts(view.webContents, 'tab')` inside `createTab()` for every tab. Both feed the same `handleShortcut(input, source)` function.
+- Per Electron's `WebContents` docs, `before-input-event` "is emitted before dispatching the `keydown` and `keyup` events in the page" — it fires for **all** keyboard input reaching that `WebContents`, with no built-in carve-out for a focused editable element (this is precisely why it's usable to intercept shortcuts a focused `<input>` would otherwise consume, e.g. overriding `Ctrl+A`). That means `mainWindow.webContents`'s handler already fires regardless of whether the address bar `<input>` or the find bar currently holds DOM focus — both live in the same shell `WebContents` — and a tab's `WebContentsView` is a structurally separate renderer the shell's own `window` object cannot observe at all, which is exactly why the `'tab'`-sourced attachment (not a renderer-side listener) is the only way to guarantee delivery there.
+- **Conclusion:** the two existing `attachShortcuts()` call sites already cover every location the panic key must reach (address bar, find bar → `'shell'` source; page content → `'tab'` source). Adding `Ctrl+Shift+Q` to the shared `handleShortcut()` shift-branch (alongside `Ctrl+Shift+R`) is sufficient; no `Menu` accelerator, no new IPC channel, and no renderer-side (`App.tsx`) duplicate handler are needed. `cleanupAndExit()`'s existing `cleanupStarted` guard (src/main/index.ts) makes this safe even if some future input source fires it more than once.
+- Verified by direct test, not just by reading docs: `tests/e2e/panic-key.spec.ts` fires the accelerator via `webContents.sendInputEvent()` targeted at a **tab's own** `WebContents` (bypassing the shell entirely, since Playwright's `_electron` API only exposes `BrowserWindow`-level pages, not individual `WebContentsView`s) and asserts the process exits and the tmpfs userData dir is removed — proving the `'tab'`-source path independently of the `'shell'`-source path.
+- Source: https://www.electronjs.org/docs/latest/api/web-contents (`before-input-event`, `sendInputEvent`)
+
+## 20. Playwright's `page.keyboard.press()` does not reach `before-input-event` at all — `webContents.sendInputEvent()` does
+
+**Verified empirically by a controlled comparison — not documented in either project's docs, and easy to get burned by while writing e2e coverage for any future main-process-only keyboard shortcut.**
+
+- Building the New Identity (`Ctrl+Shift+N`, ADR 0009) e2e test, `window.keyboard.press('Control+Shift+N')` (Playwright's `_electron` `Page.keyboard`, which drives Chromium via CDP's `Input.dispatchKeyEvent`) produced **zero** `before-input-event` firings on `mainWindow.webContents` — confirmed by temporarily instrumenting `handleShortcut()` to log every invocation to a file: the log stayed empty through an entire test run that pressed the combo, even though the same combo sent via `webContents.sendInputEvent({ type: 'keyDown', keyCode: 'N', modifiers: ['control', 'shift'] })` (called from the main process via `app.evaluate()`) reached `handleShortcut()` immediately and drove `newIdentity()` to completion correctly.
+- Practical consequence for this codebase's existing tests: shortcuts implemented in **both** places (main's `handleShortcut()` and the renderer's own `App.tsx` `window.addEventListener('keydown', ...)` — e.g. `Ctrl+T`, `Ctrl+F`) appear to work when driven by `page.keyboard.press()` in e2e tests, but that success is coming entirely from the renderer-side listener (a real DOM `keydown`, which CDP's `Input.dispatchKeyEvent` does reliably deliver to the focused element) — not from main's `before-input-event` handler. Shortcuts added **only** to `handleShortcut()` (the shift-modified combos: `Ctrl+Shift+Q`, `Ctrl+Shift+R`, `Ctrl+Shift+N` — none of which are duplicated in `App.tsx`, see §19) are consequently **untestable via `page.keyboard.press()`** and need `webContents.sendInputEvent()` targeted at the relevant `WebContents` instead — `mainWindow.webContents` for the `'shell'` source, a tab's own `webContents` (looked up via `webContents.getAllWebContents()`) for the `'tab'` source.
+- This says nothing about real end-user keyboard behavior — physical key presses reach Electron through the OS's native input path (X11/Wayland → Chromium's browser-process-side widget host), a different pipeline from CDP's synthetic injection, which is built for automating page content rather than embedder-level (`before-input-event`) shortcuts. The gap is a testing-methodology fact about this Electron/Playwright pairing, not a regression in the app.
+- Applied in `tests/e2e/new-identity.spec.ts` and `tests/e2e/panic-key.spec.ts`: both drive their shift-combo via `sendInputEvent()`, not `page.keyboard.press()`.
+
+## 21. No runtime API reports whether `crashReporter.start()` was ever called
+
+**Verified: TRUE, confirmed against Electron 43's own type definitions, not just its docs prose.**
+
+Checked every member of the `CrashReporter` interface in `node_modules/electron/electron.d.ts`
+(v43.0.0): `addExtraParameter`, `getLastCrashReport`, `getParameters`, `getUploadedReports`,
+`getUploadToServer`, `removeExtraParameter`, `setUploadToServer`, `start`. None of them is a
+boolean/status getter for "has `start()` been called" — `getUploadToServer()` reflects a
+setting `start()` or `setUploadToServer()` would configure, not whether either was ever
+invoked, and the crash-report-listing methods (`getLastCrashReport`, `getUploadedReports`)
+answer a different question (were any crashes _uploaded_) that says nothing about whether the
+reporter is _armed_. There is no supported way for a self-audit panel to ask Electron 43 "is
+the crash reporter currently active" at runtime.
+
+- Consequence for the self-audit panel (Phase 1.3): the crash-reporter row must be presented
+  honestly as build/CI-enforced (the `crashReporter.start(` grep, ADR 0002), not as a runtime
+  check — doing otherwise would be exactly the overclaiming this project exists to avoid.
+- Source: `node_modules/electron/electron.d.ts` (`CrashReporter` interface, v43.0.0).

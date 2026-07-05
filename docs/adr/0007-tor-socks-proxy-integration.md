@@ -2,10 +2,16 @@
 
 ## Status
 
-Proposed — this is a design for review, not an implementation. CLAUDE.md
-lists "Tor / SOCKS proxy integration" under non-goals that require explicit
-human approval before any code is written; nothing in this ADR has been
-built. Do not begin implementation until this is Accepted.
+Accepted (owner approval given 2026-07-05; see resolutions to the open
+questions below, decided at implementation time). CLAUDE.md's requirement
+of explicit human approval before any Tor/SOCKS code is written has been
+satisfied — this ADR's design is now binding for the implementation.
+
+Tor starts **off** by default on every launch, consistent with this
+project's "no persisted settings" rule (CLAUDE.md anti-goals) — there is no
+concept of "Tor enabled at startup" to design around; the user opts in each
+session via the toggle in decision 7, subject to the same no-tabs-open gate
+whether that happens moments after launch or hours into a session.
 
 ## Context
 
@@ -38,24 +44,25 @@ can be approved before code.
    Tor's own data directory (state, guard node cache) is a persistence
    question in its own right, separate from this app's tmpfs `userData`.
 
-2. **Proxy set at the session level, before any tab exists — and on both
+2. **Proxy set at the session level, only while no tab exists — and on both
    sessions, not just the tab partition.** `session.setProxy({ proxyRules:
 'socks5://host:port' })` on the in-memory partition used for tabs
-   (`session.fromPartition('inmemory-session', ...)`, threat-model
-   §"Cookies / LocalStorage..."), applied once at startup before
-   `createTab()` is ever called — never per-tab, and never toggled
-   mid-session. Critically, the same call must also run against
-   `session.defaultSession`, alongside `applySessionMitigations()`
-   (`src/main/index.ts`), not left as tab-partition-only. This project has
-   already hit this exact class of bug once: `defaultSession` backs the
-   shell window and is Electron's fallback for anything not explicitly
-   assigned a session, and a prior security review flagged mitigations
-   applied only to the tab partition as a real parity gap (the comment
-   above `applySessionMitigations` documents it). A proxy config with the
-   same gap — tabs proxied, `defaultSession` not — would be a silent leak
-   in exactly the spot this project has already been burned on, and directly
-   contradicts decision 4's fail-closed requirement if anything ever routes
-   through `defaultSession` unproxied.
+   (`session.fromPartition(...)`, rotated per ADR 0009 —
+   whichever partition `getInMemorySession()` currently returns), called
+   only when `tabs.size === 0` (decision 7's gate) — never per-tab, and
+   never while any tab is open. Critically, the same call must also run
+   against `session.defaultSession`, alongside `hardenSession()`
+   (`src/main/index.ts`, renamed from `applySessionMitigations` in ADR
+   0009), not left as tab-partition-only. This project has already hit this
+   exact class of bug once: `defaultSession` backs the shell window and is
+   Electron's fallback for anything not explicitly assigned a session, and a
+   prior security review flagged mitigations applied only to the tab
+   partition as a real parity gap (the comment above `hardenSession`
+   documents it). A proxy config with the same gap — tabs proxied,
+   `defaultSession` not — would be a silent leak in exactly the spot this
+   project has already been burned on, and directly contradicts decision 4's
+   fail-closed requirement if anything ever routes through `defaultSession`
+   unproxied.
 
 2a. **Wording note:** "never toggled mid-session" above means never
 changed while the proxy is in active use serving requests — it does not
@@ -118,9 +125,20 @@ route while the UI claims protection.
    and will be documented, not hidden.
 
 7. **UI surfaces Tor mode as a whole-session toggle, not a per-tab setting**,
-   changeable only when no tabs are open (forces a clean session boundary —
-   consistent with decision 2) — exact placement is a follow-up design, not
-   part of this ADR.
+   changeable only when no tab has navigated anywhere yet (forces a clean
+   session boundary — consistent with decision 2) — exact placement is a
+   follow-up design, not part of this ADR.
+
+7a. **Clarification found at implementation time:** "no tabs are open"
+above cannot mean literally zero tabs in this app — there is always at
+least one (closing the last tab quits the app entirely; there is no
+"blank window, zero tabs" state to gate on). The actual risk this decision
+guards against is a tab keeping in-flight requests on a stale route while
+the UI claims a new one; a tab still showing the start page (never
+navigated) has no content and nothing in flight, so it is harmless to
+change the proxy under it. The gate is therefore "no open tab has ever
+navigated" (`TabEntry.navigated` in `src/main/index.ts`, already tracked
+for the start-page/error-page distinction), not tab count.
 
 ## Alternatives considered
 
@@ -136,32 +154,51 @@ route while the UI claims protection.
   support a `direct` fallback, which directly conflicts with the fail-closed
   requirement in decision 4.
 
-## Open questions for the approval discussion
+## Open questions — resolved at implementation time (2026-07-05)
 
-- Should the app attempt to detect a running Tor instance automatically
-  (probe default ports) or always require explicit user configuration?
-  Auto-detection is more usable but adds a scan-for-a-local-service pattern
-  worth scrutinizing on its own.
-- Does Tor mode change any threat-model claims about fingerprinting
-  (threat-model's existing "sites can still fingerprint during the session"
-  caveat gets more serious when Tor Browser's uniform fingerprint is the
-  implicit comparison point users will bring)? This ADR deliberately does
-  not touch anti-fingerprinting (a separate non-goal in CLAUDE.md) — flagging
-  the gap rather than scoping it in.
-- Control-port integration (decision 4's circuit-health check) requires a
-  Tor control port with auth configured on the user's side — is that an
-  acceptable setup burden, or should the health check be limited to the
-  SOCKS handshake probe alone?
+- **Auto-detection of a running Tor instance?** No. The app never scans for
+  or probes ports the user hasn't specified. The host:port field defaults to
+  `127.0.0.1:9050` (pre-filled, editable) and the user must explicitly
+  trigger a connection attempt (the toggle) for the app to ever open a
+  socket to it. A background port-scanning pattern is unusual, surprising
+  behavior for a privacy tool to ship silently, and the usability gain over
+  a pre-filled default doesn't justify it. Revisit only via a new ADR if
+  real usage shows the pre-filled default is insufficient.
+- **Fingerprinting claim change?** No change beyond what decision 5 already
+  says. The threat-model update (see Consequences) adds the candid caveat
+  that Tor mode is footprint/transport-layer privacy, not anti-fingerprinting
+  or anonymity parity with Tor Browser — anti-fingerprinting remains its own
+  non-goal, untouched by this ADR.
+- **Control-port integration for circuit health / NEWNYM?** Not implemented
+  in v1. The health check is the SOCKS5 handshake probe alone (decision 4's
+  baseline) — no control-port connection, no auth cookie/password handling,
+  no `NEWNYM`. This keeps the integration surface to exactly one protocol
+  (SOCKS5) instead of two, at the cost of New Identity (existing feature)
+  only ever rotating the browser's own session when Tor is on, never
+  requesting a fresh Tor circuit — the UI must say so honestly rather than
+  imply circuit freshness it doesn't deliver. Control-port support can be a
+  later, separately-decided ADR if real usage shows the gap matters.
 
-## Consequences (if accepted)
+## Consequences
 
-- New per-session state (proxy config) that must be re-applied identically
-  on every relaunch path (fresh start, the XDG_CACHE_HOME relaunch bootstrap
-  from ADR 0004) — needs its own audit for "does this survive every launch
-  path" the way ADR 0004 audited env-var propagation.
+- New per-session state (proxy config) that is never persisted and starts
+  fresh (off) on every launch, including across the XDG_CACHE_HOME relaunch
+  bootstrap from ADR 0004 — that bootstrap re-execs the same process before
+  any UI exists, so there is no in-flight Tor state to carry across it in
+  the first place.
 - New failure-mode UI (blocking error state when the proxy probe fails) that
   doesn't exist anywhere else in the app today.
 - Verification burden grows: `scripts/verify_footprint.sh` proves nothing
-  about network egress, so this feature needs its own verification script
-  (e.g. asserting no direct-connection attempt occurs when the proxy is
-  down) before it can be considered proven rather than just implemented.
+  about network egress, so this feature needs its own e2e verification
+  against a real (hand-rolled, hermetic) SOCKS5 test server asserting: the
+  app actually routes through it when enabled, hostnames arrive at the
+  proxy undresolved (SOCKS5's domain-name address type, not a pre-resolved
+  IP), the kill-switch holds when the proxy disappears mid-session, and
+  `proxyBypassRules: ''` still leaves navigation blocked when the proxy is
+  down (i.e., nothing implicitly bypasses to direct).
+- `docs/threat-model.md`'s "Network-level observer" row moves from
+  out-of-scope to "mitigated when Tor mode is enabled, with these limits":
+  Tor itself must be trusted and running, exit-node visibility is unchanged
+  from using Tor directly, and — candidly — this is footprint elimination
+  plus transport privacy, not anonymity parity with Tor Browser (no uniform
+  fingerprint, no circuit-health control-port integration in v1).

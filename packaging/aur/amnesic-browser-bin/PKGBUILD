@@ -1,11 +1,11 @@
 # Maintainer: OttoDev
 pkgname=amnesic-browser-bin
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
 pkgdesc="A tabbed desktop browser engineered to leave nothing recoverable on disk after the process exits"
 arch=('x86_64')
 url="https://github.com/Otto-Deviant1904/Amnesic"
-license=('MIT')
+license=('Apache-2.0')
 depends=('gtk3' 'nss' 'alsa-lib' 'libxss' 'libxtst' 'at-spi2-core')
 optdepends=('fuse2: run the AppImage directly without --appimage-extract-and-run')
 provides=('amnesic-browser')
@@ -16,8 +16,8 @@ source=(
   "LICENSE-$pkgver::$url/raw/v$pkgver/LICENSE"
 )
 sha256sums=(
-  'e170b5b32aed1fa149a522d6b51e95feec40db53ce4c1f6e5cba9510c79f1742'
-  '8798574bd639aca62213384c7ec619cf4fb7199c4f532ac2cc881f432c121bf0'
+  '527096b4b44426b66f1319431fd7193fb36075fd032d161e209166fa8c744b19'
+  'c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4'
 )
 
 package() {

@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AuthCredentials, AuthRequest } from '../../shared/ipc'
 import AuthDialog from './components/AuthDialog'
+import DnsControl from './components/DnsControl'
 import ErrorPage from './components/ErrorPage'
 import FindBar from './components/FindBar'
+import SelfAuditPanel from './components/SelfAuditPanel'
+import TorControl from './components/TorControl'
 import {
   BackIcon,
   CloseIcon,
   ForwardIcon,
   LockIcon,
+  MaskIcon,
   PlusIcon,
   ReloadIcon,
   SpeakerIcon,
@@ -64,11 +68,13 @@ export default function App() {
   const [authQueue, setAuthQueue] = useState<AuthRequest[]>([])
   const [blockedDownload, setBlockedDownload] = useState<string | null>(null)
   const [swapWarning, setSwapWarning] = useState<string | null>(null)
+  const [identityFlash, setIdentityFlash] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const activeTabRef = useRef<HTMLDivElement | null>(null)
   const dragTabId = useRef<string | null>(null)
   const hasRequestedInitialTab = useRef(false)
   const downloadToastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const identityFlashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   useEffect(() => {
     const unsubscribers = [
@@ -88,6 +94,10 @@ export default function App() {
           downloadToastTimer.current = setTimeout(() => setBlockedDownload(null), 5000)
         } else if (notice.kind === 'swap-active') {
           setSwapWarning(notice.detail)
+        } else if (notice.kind === 'identity-reset') {
+          setIdentityFlash(true)
+          clearTimeout(identityFlashTimer.current)
+          identityFlashTimer.current = setTimeout(() => setIdentityFlash(false), 900)
         }
       })
     ]
@@ -213,6 +223,12 @@ export default function App() {
 
   return (
     <div className="app">
+      {identityFlash && (
+        <div className="identity-flash" role="status">
+          <MaskIcon size={22} />
+          <span>New identity — session reset</span>
+        </div>
+      )}
       <div className="chrome">
         <div className="tab-strip" role="tablist">
           {order.map((id) => {
@@ -328,6 +344,17 @@ export default function App() {
           >
             {activeTab?.loading ? <CloseIcon size={13} /> : <ReloadIcon size={14} />}
           </button>
+          <button
+            type="button"
+            className="nav-bar__button"
+            onClick={() => void window.amnesic.newIdentity()}
+            aria-label="New identity"
+            title="New identity — close all tabs and start a fresh session (Ctrl+Shift+N)"
+          >
+            <MaskIcon size={14} />
+          </button>
+          <TorControl />
+          <DnsControl />
 
           <div className="address-field">
             {!editing && scheme === 'https' && (
@@ -439,6 +466,8 @@ export default function App() {
                   </button>
                 </div>
               )}
+
+              <SelfAuditPanel />
             </div>
           )
         )}

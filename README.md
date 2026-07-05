@@ -13,8 +13,9 @@ narrow, and verifiable one: **read [docs/threat-model.md](docs/threat-model.md)
 before trusting anything about what this app does or doesn't protect
 against.** That document lists, mechanism by mechanism, what's actually
 mitigated and what isn't — including the things this project cannot fix
-(OS swap/hibernation, live RAM forensics, network-level observers,
-website fingerprinting).
+(OS swap/hibernation, live RAM forensics, website fingerprinting). Network-
+level observers are now _partially_ addressed — off by default, opt-in per
+session — see [Network privacy](#network-privacy-optional) below.
 
 ## Status
 
@@ -64,6 +65,23 @@ releases. See `research/` for the verification notes and
 `docs/adr/` for the architectural decisions and corrections that came out
 of that process.
 
+The start page also carries a **self-audit panel** that runs a set of live
+checks in the main process every time you open it (or press "Re-check") —
+turning the CI-only trust story into something you can watch happen in your
+own running instance, not just read about:
+
+<p align="center">
+  <img src=".github/assets/self-audit.png" alt="Amnesic's self-audit panel showing live runtime checks" width="560">
+</p>
+
+Every row is honest about what it actually proved: rows marked **checked
+now** were verified in that exact process at that exact moment (tmpfs
+filesystem type, the session partition's name, the HTTP-cache switch, …);
+rows marked **enforced by CI** are guarantees with no reliable Electron 43
+runtime signal (the crash-reporter guarantee, for one — see
+`research/cleanup-and-exit.md` §21) and are labeled as such rather than
+faked as a runtime check.
+
 ## Using it
 
 New tabs open on an in-app start page; the address bar accepts URLs or
@@ -84,17 +102,67 @@ retry button; there is deliberately **no** "proceed anyway" bypass for bad
 certificates. Sites behind HTTP basic auth get an in-shell sign-in dialog;
 credentials go only into the request and are forgotten with the session.
 
-| Shortcut                       | Action                                                   |
-| ------------------------------ | -------------------------------------------------------- |
-| `Ctrl+T` / `Ctrl+W`            | new / close tab                                          |
-| `Ctrl+Tab`, `Ctrl+PgUp/PgDn`   | cycle tabs                                               |
-| `Ctrl+1…8`, `Ctrl+9`           | nth / last tab                                           |
-| `Ctrl+L`                       | focus address bar                                        |
-| `Ctrl+F`                       | find in page (`Enter`/`Shift+Enter` cycle, `Esc` closes) |
-| `Ctrl+R`, `F5`, `Ctrl+Shift+R` | reload (hard)                                            |
-| `Alt+←` / `Alt+→`              | back / forward                                           |
-| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | zoom in / out / reset                                    |
-| `Esc`                          | stop loading (or revert address bar while typing)        |
+Two shortcuts reach the same wipe machinery from a different angle: the
+**panic key** (`Ctrl+Shift+Q`) runs the exact wipe-and-exit routine that
+closing the last tab does, from anywhere — address bar, page content, or the
+find bar — and quits immediately. **New identity** (`Ctrl+Shift+N`, or the
+mask icon in the toolbar) closes every open tab and rotates to a brand-new,
+freshly hardened in-memory session without restarting the app — a Tor
+Browser-style forensic reset mid-session (see ADR 0009).
+
+| Shortcut                       | Action                                                                         |
+| ------------------------------ | ------------------------------------------------------------------------------ |
+| `Ctrl+T` / `Ctrl+W`            | new / close tab                                                                |
+| `Ctrl+Tab`, `Ctrl+PgUp/PgDn`   | cycle tabs                                                                     |
+| `Ctrl+1…8`, `Ctrl+9`           | nth / last tab                                                                 |
+| `Ctrl+L`                       | focus address bar                                                              |
+| `Ctrl+F`                       | find in page (`Enter`/`Shift+Enter` cycle, `Esc` closes)                       |
+| `Ctrl+R`, `F5`, `Ctrl+Shift+R` | reload (hard)                                                                  |
+| `Alt+←` / `Alt+→`              | back / forward                                                                 |
+| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | zoom in / out / reset                                                          |
+| `Esc`                          | stop loading (or revert address bar while typing)                              |
+| `Ctrl+Shift+Q`                 | **panic key** — wipe session and quit immediately, from anywhere in the window |
+| `Ctrl+Shift+N`                 | **new identity** — close all tabs, rotate to a fresh session, without quitting |
+
+## Network privacy (optional)
+
+Local footprint elimination and network-level privacy are separate
+problems; the browser's core claim was always about the first. Two
+opt-in, session-only toggles now address a slice of the second — both are
+**off by default on every launch** and never persisted, matching the
+project's no-persisted-settings rule.
+
+**Tor / SOCKS5** (the shield chip in the toolbar) — bring your own Tor.
+Point it at a SOCKS5 proxy already running on your machine (Tor Browser,
+the system `tor` service, or your own `tor` process; `127.0.0.1:9050` is
+the pre-filled default) and the toggle connects tab traffic through it.
+Hostnames resolve at the proxy, never locally, and — critically — an
+unreachable proxy fails navigation closed rather than silently falling
+back to a direct connection. Read
+[ADR 0007](docs/adr/0007-tor-socks-proxy-integration.md) for the full
+design and its honestly-stated limits: this is transport privacy and
+footprint elimination, **not** anonymity parity with Tor Browser — no
+uniform fingerprint, no circuit-health control-port integration, and New
+Identity under Tor only rotates the browser's own session, never requests
+a fresh circuit.
+
+**DNS-over-HTTPS** (the DNS chip next to it) — independent of Tor, forces
+encrypted DNS to Quad9 or Mullvad (no Google or Cloudflare option, no
+free-text server field — see [ADR 0010](docs/adr/0010-dns-over-https-toggle.md)
+for why). While Tor mode is on, this control greys out with an
+explanation: tab DNS already resolves through the SOCKS5 proxy in that
+case, so changing the local resolver has no visible effect on proxied
+traffic — but your selection is preserved underneath, not reset, so
+turning Tor back off picks up right where you left it.
+
+Both toggles are verified end-to-end against a hand-rolled, hermetic
+SOCKS5 test server (`tests/e2e/tor.spec.ts`, `tests/e2e/dns.spec.ts`) —
+never a real Tor instance or real network egress in CI. One honestly
+un-asserted limit: neither test suite proves at the packet level that
+DNS queries leave the process as HTTPS rather than plaintext port 53 —
+that needs root/netns packet capture this project's CI doesn't have. See
+`docs/threat-model.md`'s DNS row for the manual `tcpdump`-based check a
+maintainer can run for that stronger guarantee.
 
 ## Development
 
@@ -117,9 +185,10 @@ PNGs.
 
 ## Non-goals for v1
 
-See `CLAUDE.md`. Tor/SOCKS integration, anti-fingerprinting, extensions,
-bookmarks, downloads, password/autofill management, and any telemetry are
-explicitly out of scope and require explicit approval before being added.
+See `CLAUDE.md`. Anti-fingerprinting, extensions, bookmarks, downloads,
+password/autofill management, and any telemetry are explicitly out of
+scope and require explicit approval before being added. (Tor/SOCKS
+integration was on this list before v0.3.0 — see "Network privacy" above.)
 
 ## License
 

@@ -274,6 +274,268 @@ body {
   cursor: default;
 }
 
+/* ---- Tor control (ADR 0007) ---- */
+
+.tor-control {
+  position: relative;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+
+.tor-control__chip {
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition:
+    background 80ms ease,
+    color 80ms ease,
+    border-color 80ms ease;
+}
+
+.tor-control__chip:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.tor-control__chip--on {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.tor-control__popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 260px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.tor-control__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.tor-control__row strong {
+  color: var(--text);
+}
+
+.tor-control__hint {
+  margin: 0 0 8px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-inset));
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.tor-control__form {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.tor-control__field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  color: var(--text-faint);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.tor-control__field input {
+  padding: 5px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--bg-inset);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.tor-control__field input:disabled {
+  color: var(--text-faint);
+}
+
+.tor-control__save {
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.tor-control__save:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.tor-control__error {
+  margin: 0 0 8px;
+  color: var(--danger);
+  line-height: 1.5;
+}
+
+.tor-control__toggle {
+  width: 100%;
+  height: 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-inset);
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tor-control__toggle:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.tor-control__toggle:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.tor-control__note {
+  margin: 8px 0 0;
+  line-height: 1.55;
+  color: var(--text-faint);
+}
+
+.tor-control__note code {
+  font-family: var(--font-mono);
+}
+
+/* ---- DNS control (ADR 0010) ---- */
+
+.dns-control {
+  position: relative;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+
+.dns-control__chip {
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition:
+    background 80ms ease,
+    color 80ms ease,
+    border-color 80ms ease;
+}
+
+.dns-control__chip:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.dns-control__chip--on {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.dns-control__popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 260px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.dns-control__hint {
+  margin: 0 0 8px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-inset));
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.dns-control__options {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+
+.dns-control__option {
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-inset);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dns-control__option:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.dns-control__option:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.dns-control__option--active {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  color: var(--accent);
+}
+
+.dns-control__error {
+  margin: 0 0 8px;
+  color: var(--danger);
+  line-height: 1.5;
+}
+
+.dns-control__note {
+  margin: 8px 0 0;
+  line-height: 1.55;
+  color: var(--text-faint);
+}
+
 .address-field {
   display: flex;
   align-items: center;
@@ -603,6 +865,37 @@ body {
   color: var(--text);
 }
 
+/* Brief full-window confirmation that New Identity completed (ADR 0009) —
+   pointer-events: none so it never blocks the fresh tab underneath. */
+.identity-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  color: var(--text);
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  animation: identity-flash 900ms ease forwards;
+}
+
+@keyframes identity-flash {
+  0% {
+    opacity: 0;
+  }
+  15%,
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 /* ---- Loading bar (overlays the chrome's bottom edge) ---- */
 
 .progress {
@@ -652,6 +945,11 @@ body {
   gap: 14px;
   padding: 0 24px 10vh;
   text-align: center;
+  /* The self-audit panel's real height can exceed the available space;
+     without this the overflow spills out of .start-page (whose own box has
+     no clip/scroll boundary) into the chrome above it, stealing pointer
+     hit-testing from the address bar and nav buttons. */
+  overflow-y: auto;
 }
 
 .start-page__mark {
@@ -691,6 +989,140 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* ---- Self-audit panel (start page) ---- */
+
+.self-audit {
+  flex-shrink: 0;
+  width: min(600px, 90vw);
+  margin-top: 30px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  text-align: left;
+}
+
+.self-audit__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.self-audit__title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.self-audit__refresh {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 4px 9px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  transition:
+    background 80ms ease,
+    color 80ms ease;
+}
+
+.self-audit__refresh:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.self-audit__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+
+.self-audit__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11.5px;
+}
+
+.self-audit__row:last-child {
+  border-bottom: none;
+}
+
+.self-audit__glyph {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.self-audit__row--pass .self-audit__glyph {
+  color: #7fae6c;
+}
+
+.self-audit__row--warn .self-audit__glyph {
+  color: var(--accent);
+}
+
+.self-audit__row--fail .self-audit__glyph {
+  color: var(--danger);
+}
+
+.self-audit__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.self-audit__label {
+  color: var(--text);
+}
+
+.self-audit__detail {
+  color: var(--text-faint);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.self-audit__provenance {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--bg-inset);
+  color: var(--text-faint);
+  font-size: 9.5px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.self-audit__footnote {
+  margin: 0;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+.self-audit__footnote code {
+  font-family: var(--font-mono);
 }
 
 kbd {

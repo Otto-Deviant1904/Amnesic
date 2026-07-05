@@ -10,6 +10,7 @@ export const IPC_CHANNELS = {
   TAB_REORDER: 'tab:reorder',
   TAB_TOGGLE_MUTE: 'tab:toggle-mute',
   TAB_ZOOM_RESET: 'tab:zoom-reset',
+  IDENTITY_NEW: 'identity:new',
   TAB_UPDATED: 'tab:updated',
   TAB_CLOSED: 'tab:closed',
   TAB_ACTIVATED: 'tab:activated',
@@ -22,7 +23,14 @@ export const IPC_CHANNELS = {
   SHELL_FOCUS_ADDRESS: 'shell:focus-address',
   SHELL_OPEN_FIND: 'shell:open-find',
   SHELL_CHROME_HEIGHT: 'shell:chrome-height',
-  SHELL_NOTICE: 'shell:notice'
+  SHELL_NOTICE: 'shell:notice',
+  AUDIT_REQUEST: 'audit:request',
+  TOR_GET_STATUS: 'tor:get-status',
+  TOR_SET_ENABLED: 'tor:set-enabled',
+  TOR_SET_CONFIG: 'tor:set-config',
+  DNS_GET_STATUS: 'dns:get-status',
+  DNS_SET_PROVIDER: 'dns:set-provider',
+  DNS_LIST_PROVIDERS: 'dns:list-providers'
 } as const
 
 /** A failed main-frame load, rendered as an in-shell error page. */
@@ -72,9 +80,74 @@ export interface AuthCredentials {
 }
 
 export interface ShellNotice {
-  /** download-blocked: transient toast; swap-active: persistent start-page warning. */
-  kind: 'download-blocked' | 'swap-active'
+  /** download-blocked: transient toast; swap-active: persistent start-page warning;
+   *  identity-reset: brief full-window flash confirming a completed New Identity. */
+  kind: 'download-blocked' | 'swap-active' | 'identity-reset'
   detail: string
+}
+
+/** One row of the self-audit panel (start page). All checks run in the main
+ *  process; the shell renderer only ever receives this plain, serializable
+ *  result — no new capability crosses the bridge. */
+export interface AuditCheck {
+  id: string
+  label: string
+  status: 'pass' | 'warn' | 'fail'
+  detail: string
+  /** true: verified in this running process right now. false: a guarantee
+   *  enforced by build/CI tooling with no reliable Electron 43 runtime
+   *  signal — must never be presented as if it were freshly checked. */
+  verifiedAtRuntime: boolean
+}
+
+export interface AuditReport {
+  checks: AuditCheck[]
+}
+
+/** Tor/SOCKS5 mode (ADR 0007). Session-only — never persisted, always off
+ *  on a fresh launch. */
+export interface TorStatus {
+  enabled: boolean
+  host: string
+  port: number
+}
+
+export interface TorResult {
+  ok: boolean
+  /** Present only when ok is false — e.g. the SOCKS5 probe failed, or tabs
+   *  are still open (decision 7's gate). */
+  error?: string
+  status: TorStatus
+}
+
+/** DNS-over-HTTPS provider selection (ADR 0010). Session-only — never
+ *  persisted, always off (providerId: null) on a fresh launch. `torEnabled`
+ *  is echoed here so the DNS control can grey itself out without a second
+ *  round trip: while Tor is on, DNS for tab traffic resolves through the
+ *  SOCKS5 proxy (ADR 0007), and this setting only affects the local,
+ *  non-proxied resolver path. */
+export interface DnsStatus {
+  /** null means off — Electron/Chromium's own default ('automatic'), never
+   *  a forced plaintext-only mode. */
+  providerId: string | null
+  torEnabled: boolean
+}
+
+export interface DnsResult {
+  ok: boolean
+  /** Present only when ok is false — e.g. the change was rejected because
+   *  Tor mode is on. */
+  error?: string
+  status: DnsStatus
+}
+
+/** Renderer-facing provider listing — id/label only; the renderer only
+ *  ever needs to display a name and send the id back. The main process
+ *  (src/main/dns.ts) is the sole holder of what URL template a given id
+ *  maps to. */
+export interface DnsProviderOption {
+  id: string
+  label: string
 }
 
 export interface AmnesicBridge {
@@ -89,6 +162,14 @@ export interface AmnesicBridge {
   reorderTabs: (order: string[]) => Promise<void>
   toggleMute: (tabId: string) => Promise<void>
   resetZoom: (tabId: string) => Promise<void>
+  newIdentity: () => Promise<void>
+  getAuditReport: () => Promise<AuditReport>
+  getTorStatus: () => Promise<TorStatus>
+  setTorEnabled: (enabled: boolean) => Promise<TorResult>
+  setTorConfig: (host: string, port: number) => Promise<TorResult>
+  getDnsStatus: () => Promise<DnsStatus>
+  setDnsProvider: (providerId: string | null) => Promise<DnsResult>
+  listDnsProviders: () => Promise<DnsProviderOption[]>
   findStart: (tabId: string, text: string, forward: boolean, findNext: boolean) => Promise<void>
   findStop: (tabId: string, keepSelection: boolean) => Promise<void>
   respondAuth: (requestId: string, credentials: AuthCredentials | null) => Promise<void>
