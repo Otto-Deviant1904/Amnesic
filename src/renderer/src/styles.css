@@ -276,13 +276,13 @@ body {
 
 /* ---- Tor control (ADR 0007) ---- */
 
-.tor-control {
+.proxy-control {
   position: relative;
   flex-shrink: 0;
   margin-left: 2px;
 }
 
-.tor-control__chip {
+.proxy-control__chip {
   height: 26px;
   padding: 0 9px;
   border: 1px solid var(--border-strong);
@@ -299,18 +299,18 @@ body {
     border-color 80ms ease;
 }
 
-.tor-control__chip:hover {
+.proxy-control__chip:hover {
   background: var(--bg-hover);
   color: var(--text);
 }
 
-.tor-control__chip--on {
+.proxy-control__chip--on {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent);
 }
 
-.tor-control__popover {
+.proxy-control__popover {
   position: absolute;
   z-index: 30;
   top: calc(100% + 6px);
@@ -325,18 +325,18 @@ body {
   color: var(--text-dim);
 }
 
-.tor-control__row {
+.proxy-control__row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
 }
 
-.tor-control__row strong {
+.proxy-control__row strong {
   color: var(--text);
 }
 
-.tor-control__hint {
+.proxy-control__hint {
   margin: 0 0 8px;
   padding: 7px 8px;
   border-radius: 6px;
@@ -345,14 +345,53 @@ body {
   line-height: 1.5;
 }
 
-.tor-control__form {
+.proxy-control__schemes {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.proxy-control__scheme {
+  flex: 1;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 80ms ease,
+    color 80ms ease,
+    border-color 80ms ease;
+}
+
+.proxy-control__scheme:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.proxy-control__scheme--active {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.proxy-control__scheme:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.proxy-control__form {
   display: flex;
   align-items: flex-end;
   gap: 6px;
   margin-bottom: 8px;
 }
 
-.tor-control__field {
+.proxy-control__field {
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -363,7 +402,7 @@ body {
   letter-spacing: 0.05em;
 }
 
-.tor-control__field input {
+.proxy-control__field input {
   padding: 5px 7px;
   border: 1px solid var(--border-strong);
   border-radius: 5px;
@@ -373,11 +412,11 @@ body {
   font-size: 11.5px;
 }
 
-.tor-control__field input:disabled {
+.proxy-control__field input:disabled {
   color: var(--text-faint);
 }
 
-.tor-control__save {
+.proxy-control__save {
   height: 26px;
   padding: 0 9px;
   border: 1px solid var(--border-strong);
@@ -388,18 +427,18 @@ body {
   cursor: pointer;
 }
 
-.tor-control__save:hover {
+.proxy-control__save:hover {
   background: var(--bg-hover);
   color: var(--text);
 }
 
-.tor-control__error {
+.proxy-control__error {
   margin: 0 0 8px;
   color: var(--danger);
   line-height: 1.5;
 }
 
-.tor-control__toggle {
+.proxy-control__toggle {
   width: 100%;
   height: 30px;
   border: 1px solid var(--border-strong);
@@ -411,23 +450,27 @@ body {
   cursor: pointer;
 }
 
-.tor-control__toggle:hover:not(:disabled) {
+.proxy-control__toggle:hover:not(:disabled) {
   background: var(--bg-hover);
 }
 
-.tor-control__toggle:disabled {
+.proxy-control__toggle:disabled {
   color: var(--text-faint);
   cursor: default;
 }
 
-.tor-control__note {
+.proxy-control__note {
   margin: 8px 0 0;
   line-height: 1.55;
   color: var(--text-faint);
 }
 
-.tor-control__note code {
+.proxy-control__note code {
   font-family: var(--font-mono);
+}
+
+.proxy-control__note--faint {
+  color: var(--text-faint);
 }
 
 /* ---- DNS control (ADR 0010) ---- */
@@ -534,6 +577,99 @@ body {
   margin: 8px 0 0;
   line-height: 1.55;
   color: var(--text-faint);
+}
+
+/* ---- Containers control (ADR 0011) ---- */
+
+.containers-control {
+  position: relative;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+
+.containers-control__chip {
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition:
+    background 80ms ease,
+    color 80ms ease,
+    border-color 80ms ease;
+}
+
+.containers-control__chip:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.containers-control__chip--on {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.containers-control__popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 260px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.containers-control__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.containers-control__row strong {
+  color: var(--text);
+}
+
+.containers-control__toggle {
+  width: 100%;
+  height: 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-inset);
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.containers-control__toggle:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.containers-control__toggle:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.containers-control__note {
+  margin: 8px 0 0;
+  line-height: 1.55;
+  color: var(--text-faint);
+}
+
+.containers-control__note code {
+  font-family: var(--font-mono);
 }
 
 .address-field {

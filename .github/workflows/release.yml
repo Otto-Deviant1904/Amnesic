@@ -11,8 +11,35 @@ permissions:
   contents: write # create the release and upload assets
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  # One build per architecture, each behind the full quality gate. x64 on the
+  # standard hosted runner; arm64 on GitHub's free arm64 hosted runner
+  # (ubuntu-24.04-arm, free for public repos). Each build produces its own
+  # AppImage artifact; the release job below downloads both and creates one
+  # combined release.
+  #
+  # UNTESTED UNTIL FIRST TAG PUSH: the arm64 leg (the `ubuntu-24.04-arm` runner
+  # label and electron-builder's arm64 AppImage output) has never run — it
+  # could not be exercised in the environment this was written in. The x64 leg
+  # is unchanged from the previous single-job workflow. See
+  # packaging/flatpak/README.md's sibling note and this file's history if the
+  # first arm64 release fails.
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-latest
+            # Default arch from electron-builder.yml (arch: [x64]).
+            dist: npm run dist
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            # --arm64 overrides electron-builder.yml's pinned arch. On the
+            # arm64 runner `npm ci` installs the arm64 Electron runtime, and
+            # electronDist: node_modules/electron/dist packages that native
+            # runtime — so this is a native arm64 build, not a cross-compile.
+            dist: npm run dist -- --arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -24,16 +51,51 @@ jobs:
       - run: npm ci
 
       # The full quality gate runs before anything is published — a tag on a
-      # commit that fails checks must not produce a release.
+      # commit that fails checks must not produce a release. This matches the
+      # gate the previous single-job workflow ran, now run once per arch.
+      #
+      # Note on e2e/footprint: those two steps live in ci.yml and run on every
+      # push and PR (on x64), so the commit being tagged has already passed
+      # them. They are deliberately NOT added to the arm64 release build:
+      # xvfb + the /dev/shm tmpfs forensic check have never been exercised on
+      # the ubuntu-24.04-arm runner, and the forensic guarantee is a property
+      # of the source (session/cache handling), not of the target CPU — the
+      # x64 ci.yml run already proves it for this commit. Adding them here
+      # unproven would be the kind of arm-uncertain step we were told not to
+      # bolt on silently; gating on the x64 ci.yml proof instead is the honest
+      # choice. Re-evaluate once the arm runner's xvfb/tmpfs behaviour is
+      # confirmed.
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
 
       - name: Build AppImage
-        run: npm run dist
+        run: ${{ matrix.dist }}
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage-${{ matrix.arch }}
+          path: dist/*.AppImage
+          if-no-files-found: error
+
+  # Downloads both architectures' AppImages, generates ONE combined checksum
+  # file over all of them, and drafts the release. Kept separate from the
+  # build so there is a single release with a single SHA256SUMS covering every
+  # artifact, rather than one release per arch.
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all AppImage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: appimage-*
+          path: artifacts
+          merge-multiple: true # flatten every arch's AppImage into one dir
 
       - name: Generate checksums
-        working-directory: dist
+        working-directory: artifacts
         run: sha256sum *.AppImage > SHA256SUMS
 
       # Draft so a human reads the checksums and writes the notes before
@@ -43,7 +105,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
             --draft \
             --title "$GITHUB_REF_NAME" \
             --verify-tag \
-            dist/*.AppImage dist/SHA256SUMS
+            artifacts/*.AppImage artifacts/SHA256SUMS

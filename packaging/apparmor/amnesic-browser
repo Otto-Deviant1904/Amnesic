@@ -1,0 +1,58 @@
+# AppArmor profile: grant unprivileged user namespaces to Amnesic.
+#
+# Why this file exists: the AppImage deliberately ships WITHOUT --no-sandbox
+# (ADR 0006). On kernels that restrict unprivileged user namespaces by default
+# — Ubuntu 23.10+ via the kernel.apparmor_restrict_unprivileged_userns sysctl —
+# Chromium's userns sandbox can't be created and the app fails closed (refuses
+# to start) rather than running hostile web content unsandboxed. This profile
+# is the fail-open exception for exactly this executable, matching the pattern
+# Ubuntu 24.04 ships for Chrome/Chromium/Electron AppImages (an unconfined
+# profile whose sole purpose is granting `userns`).
+#
+# It confines nothing else: flags=(unconfined) means every other operation is
+# permitted, and `userns,` re-grants the one capability the system default took
+# away. This is not a security hardening of Amnesic — it is the minimum needed
+# to let Chromium's OWN sandbox work on a locked-down kernel.
+#
+# ── Path is the hard part ──────────────────────────────────────────────────
+# AppArmor attaches a profile by matching the executable's path, and an
+# AppImage does not have one fixed path: run directly it FUSE-mounts itself
+# under a per-run directory (e.g. /tmp/.mount_amnesiXXXXXX/) and executes an
+# inner binary from there, so no stable path exists to name. Two workable
+# approaches, in order of reliability:
+#
+#   Option A (RELIABLE) — extract once, target the inner binary.
+#     ./amnesic-browser-*.AppImage --appimage-extract
+#     sudo mv squashfs-root /opt/amnesic-browser
+#     Run it via /opt/amnesic-browser/AppRun. The path below points at that
+#     fixed, extracted location. This is the recommended setup: the executable
+#     path never changes between runs, so the profile attaches deterministically.
+#
+#   Option B (LESS RELIABLE) — pin the .AppImage to a fixed location and let
+#     AppArmor match the OUTER runtime. Requires the profile to also cover the
+#     internal FUSE mount path, which is per-run and only loosely predictable;
+#     the attach-by-path guarantee is weaker and varies across AppImage runtime
+#     versions. Prefer Option A.
+#
+# Edit the path below to match where YOU put the binary, then:
+#     sudo cp packaging/apparmor/amnesic-browser /etc/apparmor.d/amnesic-browser
+#     sudo apparmor_parser -r /etc/apparmor.d/amnesic-browser   # load it
+# See packaging/apparmor/README.md for the full procedure and the honest
+# caveats (including what could NOT be runtime-tested when this was written).
+
+abi <abi/4.0>,
+include <tunables/global>
+
+# ── Option A target: the extracted AppRun launcher ──
+# AppRun is the AppImage entrypoint script; it exec()s the packaged Electron
+# binary, which is the process that actually needs `userns`. The profile
+# attaches to whichever executable the kernel checks on exec; naming both the
+# launcher and the real binary covers the extracted layout robustly.
+profile amnesic-browser /opt/amnesic-browser/{AppRun,amnesic,usr/bin/amnesic} flags=(unconfined) {
+  userns,
+
+  # Site-specific additions and overrides live here if you need them. Absent
+  # by default, which is fine — this profile intentionally grants nothing but
+  # userns on top of unconfined.
+  include if exists <local/amnesic-browser>
+}

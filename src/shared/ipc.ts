@@ -25,12 +25,14 @@ export const IPC_CHANNELS = {
   SHELL_CHROME_HEIGHT: 'shell:chrome-height',
   SHELL_NOTICE: 'shell:notice',
   AUDIT_REQUEST: 'audit:request',
-  TOR_GET_STATUS: 'tor:get-status',
-  TOR_SET_ENABLED: 'tor:set-enabled',
-  TOR_SET_CONFIG: 'tor:set-config',
+  PROXY_GET_STATUS: 'proxy:get-status',
+  PROXY_SET_ENABLED: 'proxy:set-enabled',
+  PROXY_SET_CONFIG: 'proxy:set-config',
   DNS_GET_STATUS: 'dns:get-status',
   DNS_SET_PROVIDER: 'dns:set-provider',
-  DNS_LIST_PROVIDERS: 'dns:list-providers'
+  DNS_LIST_PROVIDERS: 'dns:list-providers',
+  CONTAINERS_GET_STATUS: 'containers:get-status',
+  CONTAINERS_SET_ENABLED: 'containers:set-enabled'
 } as const
 
 /** A failed main-frame load, rendered as an in-shell error page. */
@@ -104,33 +106,40 @@ export interface AuditReport {
   checks: AuditCheck[]
 }
 
-/** Tor/SOCKS5 mode (ADR 0007). Session-only — never persisted, always off
- *  on a fresh launch. */
-export interface TorStatus {
+/** Proxy scheme = how the browser talks to the proxy, independent of the
+ *  destination's scheme. SOCKS4 is deliberately excluded (ADR 0012): it leaks
+ *  every hostname to the local resolver. */
+export type ProxyScheme = 'socks5' | 'http' | 'https'
+
+/** Proxy mode (ADR 0007, generalized by ADR 0012). Session-only — never
+ *  persisted, always off on a fresh launch, defaulting to the Tor SOCKS5
+ *  endpoint (127.0.0.1:9050). */
+export interface ProxyStatus {
   enabled: boolean
+  scheme: ProxyScheme
   host: string
   port: number
 }
 
-export interface TorResult {
+export interface ProxyResult {
   ok: boolean
-  /** Present only when ok is false — e.g. the SOCKS5 probe failed, or tabs
-   *  are still open (decision 7's gate). */
+  /** Present only when ok is false — e.g. the scheme-specific probe failed, or
+   *  tabs are still open (decision 7's gate). */
   error?: string
-  status: TorStatus
+  status: ProxyStatus
 }
 
 /** DNS-over-HTTPS provider selection (ADR 0010). Session-only — never
- *  persisted, always off (providerId: null) on a fresh launch. `torEnabled`
+ *  persisted, always off (providerId: null) on a fresh launch. `proxyEnabled`
  *  is echoed here so the DNS control can grey itself out without a second
- *  round trip: while Tor is on, DNS for tab traffic resolves through the
- *  SOCKS5 proxy (ADR 0007), and this setting only affects the local,
- *  non-proxied resolver path. */
+ *  round trip: while any proxy is on, DNS for tab traffic resolves at the
+ *  proxy (ADR 0007/0012 — true for socks5, http, and https alike), and this
+ *  setting only affects the local, non-proxied resolver path. */
 export interface DnsStatus {
   /** null means off — Electron/Chromium's own default ('automatic'), never
    *  a forced plaintext-only mode. */
   providerId: string | null
-  torEnabled: boolean
+  proxyEnabled: boolean
 }
 
 export interface DnsResult {
@@ -150,6 +159,13 @@ export interface DnsProviderOption {
   label: string
 }
 
+/** Containers mode (ADR 0011): per-tab isolated sessions. Session-only —
+ *  never persisted, always off on a fresh launch. Turning it on affects only
+ *  tabs opened afterward; existing tabs keep the session they already have. */
+export interface ContainersStatus {
+  enabled: boolean
+}
+
 export interface AmnesicBridge {
   newTab: (url?: string) => Promise<string>
   closeTab: (tabId: string) => Promise<void>
@@ -164,12 +180,14 @@ export interface AmnesicBridge {
   resetZoom: (tabId: string) => Promise<void>
   newIdentity: () => Promise<void>
   getAuditReport: () => Promise<AuditReport>
-  getTorStatus: () => Promise<TorStatus>
-  setTorEnabled: (enabled: boolean) => Promise<TorResult>
-  setTorConfig: (host: string, port: number) => Promise<TorResult>
+  getProxyStatus: () => Promise<ProxyStatus>
+  setProxyEnabled: (enabled: boolean) => Promise<ProxyResult>
+  setProxyConfig: (scheme: ProxyScheme, host: string, port: number) => Promise<ProxyResult>
   getDnsStatus: () => Promise<DnsStatus>
   setDnsProvider: (providerId: string | null) => Promise<DnsResult>
   listDnsProviders: () => Promise<DnsProviderOption[]>
+  getContainersStatus: () => Promise<ContainersStatus>
+  setContainersEnabled: (enabled: boolean) => Promise<ContainersStatus>
   findStart: (tabId: string, text: string, forward: boolean, findNext: boolean) => Promise<void>
   findStop: (tabId: string, keepSelection: boolean) => Promise<void>
   respondAuth: (requestId: string, credentials: AuthCredentials | null) => Promise<void>

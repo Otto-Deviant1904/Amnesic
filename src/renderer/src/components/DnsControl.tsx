@@ -24,20 +24,21 @@ export default function DnsControl() {
     return () => window.removeEventListener('pointerdown', onPointerDown)
   }, [open])
 
-  // Refetch on open, not just on mount — Tor mode (a separate control) can
-  // toggle while this popover has never been opened, and torEnabled here
+  // Refetch on open, not just on mount — proxy mode (a separate control) can
+  // toggle while this popover has never been opened, and proxyEnabled here
   // must reflect that live, not a stale snapshot from app start.
   const handleOpen = () => {
     void window.amnesic.getDnsStatus().then(setStatus)
     setOpen((v) => !v)
   }
 
-  // DNS for tab traffic resolves through the SOCKS5 proxy while Tor is on
-  // (ADR 0007 decision 3) — this setting only governs the local, non-
-  // proxied resolver path, so changing it has no visible effect on proxied
-  // requests. Greyed out here rather than silently overridden, so the UI
-  // never implies a guarantee this setting isn't providing right now.
-  const canChange = !!status && !status.torEnabled
+  // DNS for tab traffic resolves at the proxy while any proxy is on (ADR 0007
+  // decision 3, true for socks5/http/https alike — ADR 0012) — this setting
+  // only governs the local, non-proxied resolver path, so changing it has no
+  // visible effect on proxied requests. Greyed out here rather than silently
+  // overridden, so the UI never implies a guarantee this setting isn't
+  // providing right now.
+  const canChange = !!status && !status.proxyEnabled
 
   const handleSelect = (providerId: string | null) => {
     if (!status || pending || !canChange) return
@@ -75,10 +76,10 @@ export default function DnsControl() {
 
       {open && (
         <div className="dns-control__popover" role="dialog" aria-label="DNS settings">
-          {status.torEnabled && (
+          {status.proxyEnabled && (
             <p className="dns-control__hint">
-              DNS already resolves through the Tor proxy while Tor mode is on — this setting only
-              affects non-proxied lookups, so it&rsquo;s locked while Tor is enabled.
+              DNS already resolves at the proxy while proxy mode is on — this setting only affects
+              non-proxied lookups, so it&rsquo;s locked while a proxy is enabled.
             </p>
           )}
 
@@ -108,7 +109,8 @@ export default function DnsControl() {
 
           <p className="dns-control__note">
             Forces DNS-over-HTTPS to the selected resolver for lookups that don&rsquo;t go through
-            Tor. No Google or Cloudflare option by design. Nothing here is saved between sessions.
+            the proxy. No Google or Cloudflare option by design. Nothing here is saved between
+            sessions.
           </p>
         </div>
       )}

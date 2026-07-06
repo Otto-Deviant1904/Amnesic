@@ -3,6 +3,91 @@
 All notable changes to Amnesic Browser are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.0] — Unreleased
+
+### Changed
+
+- **The Tor/SOCKS5 proxy is generalized to any user-supplied proxy scheme**
+  (ADR 0012, extending ADR 0007). The shield chip in the toolbar now offers
+  three schemes — **Tor / SOCKS5** (the unchanged one-click default,
+  `127.0.0.1:9050`), **HTTP**, and **HTTPS** — so the browser can route its own
+  traffic through a proxy a VPN or provider already exposes, not only a local
+  Tor SOCKS5 endpoint. This is the honest, browser-scoped equivalent of "use my
+  VPN": still bring-your-own-proxy, still session-only and never persisted, and
+  **not** a system VPN (no TUN, no root, no bundled tunnel — out of scope).
+  - Every ADR 0007 guarantee holds for all three schemes: DNS resolves **at the
+    proxy, never locally** (proven for HTTP against a hermetic test proxy that
+    asserts the destination hostname arrives unresolved); the kill-switch
+    **fails closed** for an unreachable proxy (a bare `<scheme>://host:port`
+    rule has no direct fallback); the no-tabs-navigated gate, both-sessions +
+    all-live-tab-sessions application, empty bypass list, and mandatory WebRTC
+    layers are unchanged.
+  - **SOCKS4 is deliberately excluded** — it has no domain-name address type and
+    would leak every hostname to the local resolver (ADR 0007 decision 3).
+  - Honest per-scheme UI/README copy: all three resolve DNS at the proxy, but an
+    HTTP/HTTPS proxy is a **single operator** (your VPN endpoint) who sees your
+    real IP and can correlate your traffic — transport privacy, not anonymity,
+    and never as private as Tor's relay model.
+  - Renamed for honesty (a `tor.ts` carrying HTTP-proxy logic would mislead):
+    `src/main/tor.ts`→`proxy.ts`, `TorControl.tsx`→`ProxyControl.tsx`, the
+    `TOR_*` IPC channels→`PROXY_*`, and the `Tor*` types/state→`Proxy*`. No
+    behavior change for existing SOCKS5/Tor users — the default and its
+    fail-closed guarantees are identical.
+
+## [0.4.0] — Unreleased
+
+### Added
+
+- **Containers mode** (the "Containers" chip in the toolbar) — opt-in,
+  off-by-default per-tab session isolation. When on, each tab you open gets
+  its own fresh, never-reused in-memory partition, so a cookie or
+  `localStorage` entry a tracker sets in one tab is invisible to that same
+  tracker in another tab — closing off the storage-based cross-tab
+  correlation that a single shared session allows. Session-only, never
+  persisted, matching every other network/privacy toggle. See ADR 0011.
+  - Turning it on affects only tabs opened afterward; tabs already open keep
+    their session, and there is no teardown of existing tabs (New Identity
+    remains the one mass reset).
+  - Links a page opens itself (`window.open`, `target=_blank`, and the
+    context-menu "open in new tab") inherit the opener tab's container, so
+    OAuth/login pop-ups don't land in a different container and lose the
+    session — matching Firefox Multi-Account Containers semantics.
+  - Integrates with the existing network toggles: the Tor/SOCKS5 proxy is
+    applied to every live per-tab session (a fresh container opened while Tor
+    is on is proxied before it loads anything, and the fail-closed kill-switch
+    holds identically); DoH needs no per-session work since it is a
+    process-global resolver setting.
+- README "Using it" section documents the chip with its honest limits;
+  `docs/threat-model.md` gains a containers row stating plainly that this is
+  per-tab (not per-site/first-party) isolation — third parties within one tab
+  still share that tab's partition, every tab still shares one IP, and
+  fingerprinting can still correlate tabs.
+
+### Verification
+
+- Per-tab partition naming is refactored into the pure, unit-tested
+  `src/main/partitions.ts`; `tests/unit/partitions.test.ts` proves the
+  never-reuse invariant across both generations and toggle flips, and the
+  absence of any `persist:` prefix.
+- The "no view may be built on an unhardened session" rule is enforced by the
+  type system, not a comment: `createTab()` now requires an already-prepared
+  `Session`, and the only async door that mints a fresh one
+  (`prepareFreshTabSession()`) hardens it first.
+- New e2e coverage (`tests/e2e/containers.spec.ts`): containers-off shares a
+  cookie across tabs; containers-on isolates it; a page-opened tab shares its
+  opener's container; New Identity under containers leaves one working,
+  isolated fresh tab; and a container tab opened under Tor routes through the
+  SOCKS5 proxy (reusing the hermetic fake-proxy harness).
+- `scripts/footprint-session.mjs` now toggles containers on mid-session and
+  stores data in a fresh per-tab partition while keeping every existing
+  tmpfs-residue assertion green.
+- Memory tradeoff measured with `scripts/measure-containers.mjs` and recorded
+  honestly in ADR 0011: on this workstation, 10 container tabs cost ≈1% more
+  RSS than 10 shared-session tabs and add zero processes (per-tab partitions
+  are network contexts inside the existing network-service process, not new
+  processes) — with the explicit caveat that this is a floor measured on an
+  empty hermetic page, not a figure for heavy real-world sites.
+
 ## [0.3.0] — Unreleased
 
 ### Added

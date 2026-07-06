@@ -148,6 +148,27 @@ await window
   .waitForSelector('.download-notice', { timeout: 10000 })
   .catch(() => fail('download was not visibly blocked'))
 
+// Containers mode (ADR 0011): toggle it on mid-session and open a tab that
+// exercises every storage mechanism in its OWN fresh per-tab partition. That
+// partition is memory-only like every other session here (no persist: prefix,
+// under the tmpfs userData dir), so it must leave no more disk residue than
+// the shared session does — the tmpfs-survives-then-gone assertions below
+// cover it too. The chip toggles through IPC on click, like the Tor chip.
+await window.locator('.containers-control__chip').click()
+await window.getByRole('button', { name: 'Turn on containers' }).click()
+await window.locator('.address-bar__input').click() // click-outside closes the popover
+await window.keyboard.press('Control+t')
+await window.waitForSelector('.start-page')
+await window.focus('.address-bar__input')
+await window.keyboard.type(`localhost:${port}/page3`)
+await window.keyboard.press('Enter')
+await window.waitForSelector('.tab--active .tab__title:has-text("Footprint Probe Ready")', {
+  timeout: 15000
+})
+if (!fs.existsSync(shmDir)) {
+  fail('tmpfs userData dir vanished after opening a container tab — only final exit may remove it')
+}
+
 // Close the window (not app.close()) so the real user exit path runs:
 // window-all-closed -> cleanupAndExit -> tmpfs deletion -> app.exit(0).
 await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close())

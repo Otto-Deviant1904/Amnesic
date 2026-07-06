@@ -35,12 +35,16 @@ const bridge: AmnesicBridge = {
   resetZoom: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.TAB_ZOOM_RESET, tabId),
   newIdentity: () => ipcRenderer.invoke(IPC_CHANNELS.IDENTITY_NEW),
   getAuditReport: () => ipcRenderer.invoke(IPC_CHANNELS.AUDIT_REQUEST),
-  getTorStatus: () => ipcRenderer.invoke(IPC_CHANNELS.TOR_GET_STATUS),
-  setTorEnabled: (enabled) => ipcRenderer.invoke(IPC_CHANNELS.TOR_SET_ENABLED, enabled),
-  setTorConfig: (host, port) => ipcRenderer.invoke(IPC_CHANNELS.TOR_SET_CONFIG, host, port),
+  getProxyStatus: () => ipcRenderer.invoke(IPC_CHANNELS.PROXY_GET_STATUS),
+  setProxyEnabled: (enabled) => ipcRenderer.invoke(IPC_CHANNELS.PROXY_SET_ENABLED, enabled),
+  setProxyConfig: (scheme, host, port) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROXY_SET_CONFIG, scheme, host, port),
   getDnsStatus: () => ipcRenderer.invoke(IPC_CHANNELS.DNS_GET_STATUS),
   setDnsProvider: (providerId) => ipcRenderer.invoke(IPC_CHANNELS.DNS_SET_PROVIDER, providerId),
   listDnsProviders: () => ipcRenderer.invoke(IPC_CHANNELS.DNS_LIST_PROVIDERS),
+  getContainersStatus: () => ipcRenderer.invoke(IPC_CHANNELS.CONTAINERS_GET_STATUS),
+  setContainersEnabled: (enabled) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONTAINERS_SET_ENABLED, enabled),
   findStart: (tabId, text, forward, findNext) =>
     ipcRenderer.invoke(IPC_CHANNELS.FIND_START, tabId, text, forward, findNext),
   findStop: (tabId, keepSelection) =>

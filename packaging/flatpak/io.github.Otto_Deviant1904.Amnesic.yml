@@ -1,0 +1,83 @@
+# ⚠️ DRAFT MANIFEST — NEVER BUILT. ⚠️
+#
+# This file has NOT been run through flatpak-builder. flatpak-builder is not
+# installed on the machine it was written on, so nothing here is verified to
+# build, install, or run. It is a starting point for the investigation in
+# README.md, not a shippable package. Read that README before doing anything
+# with this file — its conclusion may be "do not publish a Flatpak yet".
+#
+# App ID rationale (Flathub convention for a GitHub-hosted project with no
+# custom domain): io.github.<user>.<repo>. The GitHub owner is
+# "Otto-Deviant1904"; Flatpak app-ID elements may not contain hyphens, so per
+# Flathub's documented normalisation the "-" becomes "_" → Otto_Deviant1904.
+# NOTE this does NOT match electron-builder.yml's appId
+# (io.github.ottodeviant1904.amnesic, hyphen dropped + lowercased). That
+# mismatch must be reconciled before any real submission — pick ONE canonical
+# app ID. See README.md §"App ID". [UNVERIFIED against current Flathub docs —
+# host not reachable from the authoring environment.]
+
+app-id: io.github.Otto_Deviant1904.Amnesic
+runtime: org.freedesktop.Platform
+# Runtime version is a placeholder — confirm the current org.freedesktop
+# runtime Flathub expects, and that the packaged Electron (electron@43 /
+# Chromium 150) is happy on it, before building. [UNVERIFIED]
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+
+# Electron apps on Flathub launch Chromium through zypak, which redirects
+# Chromium's sandbox onto the Flatpak sandbox (bwrap) instead of Chromium's
+# own SUID/userns helper — because inside the Flatpak sandbox the app cannot
+# create nested user namespaces. See README.md §"zypak and the sandbox story".
+# zypak-wrapper is provided by org.freedesktop.Platform.
+command: zypak-wrapper.sh
+
+finish-args:
+  # Display + GPU. Wayland with X11 fallback.
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc          # required for X11 / shared-memory rendering
+  - --device=dri         # GPU acceleration
+
+  # The app is a browser: it needs the network.
+  - --share=network
+
+  # Audio (the app has an audio indicator / mute).
+  - --socket=pulseaudio
+
+  # NOTE ON FILESYSTEM ACCESS: deliberately none granted here. This app's whole
+  # claim is "nothing recoverable on disk". Granting --filesystem=home or
+  # host would hand it real-disk paths it must never write to. A downloads
+  # capability is a v1 non-goal anyway (CLAUDE.md). Do NOT add filesystem
+  # permissions without an ADR — see README.md §"XDG dirs land on real disk".
+
+# ── UNRESOLVED, see README.md before trusting this section ──
+# The app relaunches itself with XDG_CACHE_HOME pointed into /dev/shm (ADR
+# 0004/0008) so non-Chromium caches (Mesa, fontconfig) land in tmpfs. Whether
+# that relaunch bootstrap survives inside the zypak/bwrap sandbox, and whether
+# /dev/shm inside the sandbox is tmpfs + private to this app, are the two load-
+# bearing questions the investigation could not resolve without a real build.
+# There is NO env override here forcing XDG_CACHE_HOME because the app sets it
+# itself at runtime; if that mechanism turns out not to hold under Flatpak, this
+# manifest is not shippable as-is.
+
+modules:
+  - name: amnesic
+    buildsystem: simple
+    build-commands:
+      # DRAFT — this simply unpacks the released AppImage and installs its
+      # contents. Whether shipping the AppImage's bundled Electron inside a
+      # Flatpak (vs. building against a Flathub electron BaseApp) is acceptable
+      # to Flathub is UNVERIFIED. This is illustrative only.
+      - chmod +x amnesic-browser-*.AppImage
+      - ./amnesic-browser-*.AppImage --appimage-extract
+      - mkdir -p /app/amnesic
+      - cp -a squashfs-root/. /app/amnesic/
+      - install -Dm644 squashfs-root/amnesic.desktop /app/share/applications/${FLATPAK_ID}.desktop
+      # Icon / metainfo installs and the zypak-wrapper glue are omitted from
+      # this draft — Flathub requires an AppStream metainfo.xml and a matching
+      # desktop-file/icon rename to ${FLATPAK_ID}. TODO before any submission.
+    sources:
+      # Pin to a real release + sha256 before building. Placeholder version.
+      - type: file
+        url: https://github.com/Otto-Deviant1904/Amnesic/releases/download/v0.1.2/amnesic-browser-0.1.2-x86_64.AppImage
+        sha256: 0000000000000000000000000000000000000000000000000000000000000000  # PLACEHOLDER — fill from SHA256SUMS

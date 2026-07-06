@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AuthCredentials, AuthRequest } from '../../shared/ipc'
 import AuthDialog from './components/AuthDialog'
+import ContainersControl from './components/ContainersControl'
 import DnsControl from './components/DnsControl'
 import ErrorPage from './components/ErrorPage'
 import FindBar from './components/FindBar'
+import ProxyControl from './components/ProxyControl'
 import SelfAuditPanel from './components/SelfAuditPanel'
-import TorControl from './components/TorControl'
 import {
   BackIcon,
   CloseIcon,
@@ -353,8 +354,9 @@ export default function App() {
           >
             <MaskIcon size={14} />
           </button>
-          <TorControl />
+          <ProxyControl />
           <DnsControl />
+          <ContainersControl />
 
           <div className="address-field">
             {!editing && scheme === 'https' && (

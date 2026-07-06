@@ -53,14 +53,14 @@ async function launchApp(): Promise<{ app: ElectronApplication; window: Page }> 
 }
 
 async function enableTor(window: Page, port: number): Promise<void> {
-  await window.locator('.tor-control__chip').click()
-  const hostInput = window.locator('.tor-control__field input').first()
-  const portInput = window.locator('.tor-control__field input').nth(1)
+  await window.locator('.proxy-control__chip').click()
+  const hostInput = window.locator('.proxy-control__field input').first()
+  const portInput = window.locator('.proxy-control__field input').nth(1)
   await hostInput.fill('127.0.0.1')
   await portInput.fill(String(port))
   await window.getByRole('button', { name: 'Save' }).click()
   await window.getByRole('button', { name: 'Enable Tor' }).click()
-  await expect(window.locator('.tor-control__chip')).toHaveText('Tor: On', { timeout: 10_000 })
+  await expect(window.locator('.proxy-control__chip')).toHaveText('Tor: On', { timeout: 10_000 })
 }
 
 test('selecting a provider updates the chip and offers no Google/Cloudflare default', async () => {
@@ -110,7 +110,7 @@ test('Tor mode greys out the DNS control but preserves the selection underneath'
     await window.locator('.dns-control__chip').click() // close
 
     await enableTor(window, socks.port)
-    await window.locator('.tor-control__chip').click() // close Tor popover
+    await window.locator('.proxy-control__chip').click() // close Tor popover
 
     await window.locator('.dns-control__chip').click()
     await expect(window.locator('.dns-control__hint')).toBeVisible()
@@ -120,11 +120,11 @@ test('Tor mode greys out the DNS control but preserves the selection underneath'
     await expect(window.locator('.dns-control__chip')).toHaveText('DNS: Quad9')
     await window.locator('.dns-control__chip').click() // close
 
-    await window.locator('.tor-control__chip').click()
+    await window.locator('.proxy-control__chip').click()
     await expect(window.getByRole('button', { name: 'Disable Tor' })).toBeVisible()
     await window.getByRole('button', { name: 'Disable Tor' }).click()
-    await expect(window.locator('.tor-control__chip')).toHaveText('Tor: Off')
-    await window.locator('.tor-control__chip').click() // close
+    await expect(window.locator('.proxy-control__chip')).toHaveText('Tor: Off')
+    await window.locator('.proxy-control__chip').click() // close
 
     await window.locator('.dns-control__chip').click()
     await expect(window.locator('.dns-control__hint')).toHaveCount(0)
