@@ -28,6 +28,15 @@ import {
   type TabState
 } from '../shared/ipc'
 import { attachShellContextMenu, attachTabContextMenu } from './context-menu'
+import {
+  applyBlockingResponseHeaders,
+  blockingStatus,
+  installContentBlocking,
+  resetBlockedCount,
+  setBlockingChangeListener,
+  setBlockingEnabled,
+  warmBlockingEngine
+} from './blocking'
 import { DOH_PROVIDERS, findDohProvider, resolverConfigFor } from './dns'
 import { sharedPartitionName, tabPartitionName } from './partitions'
 import { acquireSingleInstance, defaultLockDir, type SingleInstanceLock } from './single-instance'
@@ -295,7 +304,7 @@ function currentProxyConfig(): Electron.ProxyConfig {
 // there, which security review flagged as a real parity gap against
 // docs/threat-model.md's mitigation table (a future bug that let untrusted
 // content reach defaultSession would otherwise be unprotected).
-async function hardenSession(ses: Session): Promise<void> {
+async function hardenSession(ses: Session, blockContent = true): Promise<void> {
   ses.setSpellCheckerEnabled(false)
 
   // Referrer suppression — replaces the dead `no-referrers` switch (ADR 0002).
@@ -304,14 +313,26 @@ async function hardenSession(ses: Session): Promise<void> {
     delete headers['Referer']
     callback({ requestHeaders: headers })
   })
+  // Single onHeadersReceived per session (Electron allows only one listener per
+  // event): always the referrer-policy header, plus — for content-blocking
+  // sessions — any $csp filter directives from the engine (ADR 0013). The
+  // adblocker library would otherwise register its own onHeadersReceived and
+  // silently clobber this referrer header, which is why blocking.ts drives the
+  // engine directly instead of enableBlockingInSession().
   ses.webRequest.onHeadersReceived((details, callback) => {
-    callback({
-      responseHeaders: {
-        ...details.responseHeaders,
-        'Referrer-Policy': ['no-referrer']
-      }
-    })
+    const responseHeaders: Record<string, string[]> = {
+      ...details.responseHeaders,
+      'Referrer-Policy': ['no-referrer']
+    }
+    if (blockContent) applyBlockingResponseHeaders(details, responseHeaders)
+    callback({ responseHeaders })
   })
+
+  // The shell/default session backs only trusted local file:// UI — never ad
+  // block it (wasted per-request work, and a filter rule cancelling a shell
+  // asset would be a real bug). ADR 0013: blocking covers tab, container, and
+  // New-Identity-rotated sessions only.
+  if (blockContent) installContentBlocking(ses)
 
   // Deny all permission requests except HTML5 fullscreen. Fullscreen is a
   // display-state request, not a privacy surface — it exposes no sensor,
@@ -338,13 +359,31 @@ async function hardenSession(ses: Session): Promise<void> {
   await ses.setProxy(currentProxyConfig())
 }
 
+// The single door for every main→shell push. `mainWindow` is never nulled, so
+// after the window closes it points at a DESTROYED BrowserWindow — and during
+// exit teardown tab WebContents still emit events (did-stop-loading,
+// audio-state-changed, found-in-page, ...). A `.send()` on the destroyed shell
+// throws "Object has been destroyed" INSIDE a native WebContents.emit, which
+// kills the completion callbacks of whatever cleanupAndExit() is awaiting at
+// that moment — observed as session.clearStorageData() never resolving, the
+// app never exiting, and the tmpfs wipe never running (a direct violation of
+// the exit-residue charter; found by scripts/verify_footprint.sh). Bailing out
+// silently is not lossy: with the shell gone there is nobody to render the
+// update anyway.
+function sendToShell(channel: string, ...args: unknown[]): void {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
+  mainWindow.webContents.send(channel, ...args)
+}
+
 function sendNotice(notice: ShellNotice): void {
-  mainWindow?.webContents.send(IPC_CHANNELS.SHELL_NOTICE, notice)
+  sendToShell(IPC_CHANNELS.SHELL_NOTICE, notice)
 }
 
 async function configureSession(): Promise<void> {
   await hardenSession(getInMemorySession())
-  await hardenSession(session.defaultSession)
+  // defaultSession backs the trusted shell UI only — harden it, but without
+  // content blocking (ADR 0013).
+  await hardenSession(session.defaultSession, false)
 }
 
 // "No tabs open" (ADR 0007 decision 7) means no tab has ever loaded real
@@ -508,13 +547,17 @@ function setActiveTab(id: string): void {
     next.view.setVisible(true)
     layoutActiveView()
   }
-  mainWindow.webContents.send(IPC_CHANNELS.TAB_ACTIVATED, id)
+  sendToShell(IPC_CHANNELS.TAB_ACTIVATED, id)
 }
 
 function sendTabUpdate(id: string): void {
   const entry = tabs.get(id)
   if (!entry || !mainWindow) return
   const wc = entry.view.webContents
+  // Teardown-safe: during exit the tab's WebContents can already be destroyed
+  // while its event emitters still fire; every getter below would throw (see
+  // sendToShell's comment for why a throw here is charter-critical).
+  if (wc.isDestroyed()) return
   const state: TabState = {
     tabId: id,
     url: entry.navigated ? wc.getURL() : '',
@@ -528,7 +571,7 @@ function sendTabUpdate(id: string): void {
     zoomPercent: Math.round(wc.getZoomFactor() * 100),
     error: entry.error
   }
-  mainWindow.webContents.send(IPC_CHANNELS.TAB_UPDATED, state)
+  sendToShell(IPC_CHANNELS.TAB_UPDATED, state)
 }
 
 // Favicons are fetched by us (main) through the tab's own in-memory session —
@@ -570,7 +613,7 @@ function activeWebContents(): WebContents | null {
 function focusAddressBar(): void {
   if (!mainWindow) return
   mainWindow.webContents.focus()
-  mainWindow.webContents.send(IPC_CHANNELS.SHELL_FOCUS_ADDRESS)
+  sendToShell(IPC_CHANNELS.SHELL_FOCUS_ADDRESS)
 }
 
 function cycleTab(delta: number): void {
@@ -597,7 +640,7 @@ function adjustZoom(delta: number | null): void {
 function openFindBar(): void {
   if (!mainWindow) return
   mainWindow.webContents.focus()
-  mainWindow.webContents.send(IPC_CHANNELS.SHELL_OPEN_FIND)
+  sendToShell(IPC_CHANNELS.SHELL_OPEN_FIND)
 }
 
 // Browser-chrome shortcuts, handled in main so they work no matter whether the
@@ -725,11 +768,12 @@ const WEBRTC_BLOCK_SCRIPT = `(() => {
   }
 })();`
 
-async function installWebRtcBlock(view: WebContentsView): Promise<void> {
-  const wc = view.webContents
+async function installWebRtcBlock(wc: WebContents): Promise<void> {
   try {
-    wc.debugger.attach('1.3')
-    await wc.debugger.sendCommand('Page.enable')
+    if (!wc.debugger.isAttached()) {
+      wc.debugger.attach('1.3')
+      await wc.debugger.sendCommand('Page.enable')
+    }
     await wc.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', {
       source: WEBRTC_BLOCK_SCRIPT
     })
@@ -765,7 +809,10 @@ function createTab(ses: Session, url?: string, options: { background?: boolean }
   // setWebRTCIPHandlingPolicy is per-webContents, not per-session — must be (re-)applied
   // to every tab. One of three WebRTC leak mitigation layers (ADR 0002).
   view.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
-  void installWebRtcBlock(view)
+  void installWebRtcBlock(view.webContents)
+  // Cosmetic + scriptlet injection is handled by the engine's frame preload
+  // registered on the session (installContentBlocking), so there is no per-tab
+  // content-blocking wiring here anymore (ADR 0013).
 
   // Never create real popup windows. window.open / target=_blank / ctrl+click
   // instead open as a new tab, which goes through this same createTab path and
@@ -840,7 +887,7 @@ function createTab(ses: Session, url?: string, options: { background?: boolean }
 
   view.webContents.on('found-in-page', (_event, result) => {
     if (!result.finalUpdate) return // interim updates would make the count flicker
-    mainWindow?.webContents.send(IPC_CHANNELS.FIND_RESULT, {
+    sendToShell(IPC_CHANNELS.FIND_RESULT, {
       tabId: id,
       matches: result.matches,
       activeMatchOrdinal: result.activeMatchOrdinal
@@ -916,7 +963,7 @@ function closeTab(id: string, options: { quitOnEmpty?: boolean } = {}): void {
   for (const [requestId, pending] of [...pendingAuth]) {
     if (pending.tabId === id) {
       resolveAuth(requestId, null)
-      mainWindow.webContents.send(IPC_CHANNELS.AUTH_CANCELLED, requestId)
+      sendToShell(IPC_CHANNELS.AUTH_CANCELLED, requestId)
     }
   }
   if (id === activeTabId) resetHtmlFullscreen()
@@ -925,7 +972,7 @@ function closeTab(id: string, options: { quitOnEmpty?: boolean } = {}): void {
   mainWindow.contentView.removeChildView(entry.view)
   entry.view.webContents.close()
   tabs.delete(id)
-  mainWindow.webContents.send(IPC_CHANNELS.TAB_CLOSED, id)
+  sendToShell(IPC_CHANNELS.TAB_CLOSED, id)
   if (activeTabId === id) {
     activeTabId = null
     // Prefer the right-hand neighbour, then the left one — matches what every
@@ -978,6 +1025,7 @@ async function newIdentity(): Promise<void> {
     // session. tabPartitionCounter is deliberately NOT reset (decision 2).
     sessionGeneration += 1
     await hardenSession(getInMemorySession())
+    resetBlockedCount()
 
     await openUserTab()
     sendNotice({ kind: 'identity-reset', detail: '' })
@@ -1075,6 +1123,20 @@ function registerIpcHandlers(): void {
     IPC_CHANNELS.CONTAINERS_SET_ENABLED,
     (_event, enabled: boolean): ContainersStatus => setContainersEnabled(enabled)
   )
+  ipcMain.handle(IPC_CHANNELS.BLOCKING_GET_STATUS, () => blockingStatus())
+  ipcMain.handle(IPC_CHANNELS.BLOCKING_SET_ENABLED, (_event, enabled: unknown) => {
+    // Validate rather than coerce: an unexpected payload must not silently flip
+    // blocking. Ignore non-booleans and just report current status.
+    if (typeof enabled !== 'boolean') return blockingStatus()
+    return setBlockingEnabled(enabled)
+  })
+  // Push status to the renderer as the blocked count climbs (throttled inside
+  // blocking-engine.ts) and immediately on reset/toggle, so the popover count
+  // stays live instead of being a stale mount-time snapshot. Also fixes the
+  // New Identity case where resetBlockedCount() left the shown count stale.
+  setBlockingChangeListener(() => {
+    sendToShell(IPC_CHANNELS.BLOCKING_STATUS_CHANGED, blockingStatus())
+  })
   ipcMain.handle(
     IPC_CHANNELS.FIND_START,
     (_event, tabId: string, text: string, forward: boolean, findNext: boolean) => {
@@ -1357,6 +1419,13 @@ async function cleanupAndExit(): Promise<void> {
   // can't drift from the Tor-apply set. This is belt-and-suspenders on top of
   // the tmpfs deletion below — the partitions are memory-only, so nothing was
   // on disk — but it drops Chromium's own references before exit.
+  // NOTE: while these clears are awaited, tab WebContents are still tearing
+  // down and their events still fire. Any synchronous throw inside one of
+  // those native emits (e.g. a `.send()` to the already-destroyed shell
+  // window) aborts Chromium's in-flight completion dispatch and the awaited
+  // promise below NEVER resolves — the app hangs and the tmpfs wipe never
+  // runs. That is why every main→shell push goes through the destroyed-safe
+  // sendToShell() and sendTabUpdate() bails on destroyed WebContents.
   for (const ses of liveTabSessions()) {
     await ses.clearStorageData()
     await ses.clearCache()
@@ -1391,7 +1460,7 @@ app.on('login', (event, webContents, _details, authInfo, callback) => {
   const tabId = [...tabs.entries()].find(([, e]) => e.view.webContents === webContents)?.[0] ?? null
   pendingAuth.set(requestId, { callback, tabId })
   if (tabId && tabId === activeTabId) tabs.get(tabId)?.view.setVisible(false)
-  mainWindow.webContents.send(IPC_CHANNELS.AUTH_REQUEST, {
+  sendToShell(IPC_CHANNELS.AUTH_REQUEST, {
     requestId,
     host: authInfo.host,
     realm: authInfo.realm,
@@ -1402,6 +1471,7 @@ app.on('login', (event, webContents, _details, authInfo, callback) => {
 app.whenReady().then(async () => {
   if (relaunching) return // this instance only exists to re-exec with the cache env set
   if (process.platform === 'linux') sweepStaleShmDirs()
+  warmBlockingEngine()
   // The lock lives on tmpfs like everything else; a second launch hands its
   // URLs to the running instance and exits. Skipped under automation for the
   // same reason as the relaunch bootstrap: Playwright and dev instances own

@@ -33,6 +33,15 @@ files:
   - out/**
   - '!node_modules/**'
 
+# The @ghostery/adblocker frame preload (cosmetic + scriptlet injection) must
+# exist as a real file on disk to be registered via session.registerPreloadScript.
+# It is self-contained (only requires 'electron'). Copy it next to the asar so
+# blocking.ts framePreloadPath() can load it from process.resourcesPath in the
+# packaged app (ADR 0013). node_modules is otherwise excluded from the package.
+extraResources:
+  - from: node_modules/@ghostery/adblocker-electron-preload/dist/index.cjs
+    to: adblocker-preload.cjs
+
 # Bake hardening into the binary: the packaged app must not be usable as a
 # generic Node runtime (ELECTRON_RUN_AS_NODE, NODE_OPTIONS, --inspect are all
 # ways to run arbitrary code with the app's identity or defeat its

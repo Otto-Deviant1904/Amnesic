@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AuthCredentials, AuthRequest } from '../../shared/ipc'
 import AuthDialog from './components/AuthDialog'
+import BlockingControl from './components/BlockingControl'
 import ContainersControl from './components/ContainersControl'
 import DnsControl from './components/DnsControl'
 import ErrorPage from './components/ErrorPage'
@@ -357,6 +358,7 @@ export default function App() {
           <ProxyControl />
           <DnsControl />
           <ContainersControl />
+          <BlockingControl />
 
           <div className="address-field">
             {!editing && scheme === 'https' && (

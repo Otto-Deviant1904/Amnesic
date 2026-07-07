@@ -154,9 +154,7 @@ await sleep(1200)
 // webContents so the keystrokes are visible in the recording.
 await app.evaluate(
   async ({ webContents }, { port }) => {
-    const wc = webContents
-      .getAllWebContents()
-      .find((w) => w.getURL().includes(`localhost:${port}`))
+    const wc = webContents.getAllWebContents().find((w) => w.getURL().includes(`localhost:${port}`))
     const type = async (selector, text) => {
       await wc.executeJavaScript(`document.querySelector('${selector}').focus()`)
       for (const ch of text) {
@@ -167,9 +165,7 @@ await app.evaluate(
     await type('#u', 'demo@example.com')
     await type('#p', 'hunter2-demo')
     await new Promise((r) => setTimeout(r, 500))
-    await wc.executeJavaScript(
-      `document.querySelector('#f button').click()`
-    )
+    await wc.executeJavaScript(`document.querySelector('#f button').click()`)
   },
   { port }
 )
@@ -234,8 +230,20 @@ sleep 6
 await new Promise((resolve) => {
   const term = spawn(
     'xterm',
-    ['-fa', 'DejaVu Sans Mono', '-fs', 15, '-bg', '#10141b', '-fg', '#e6e9ef',
-     '-geometry', '106x28+0+0', '-e', checkScript],
+    [
+      '-fa',
+      'DejaVu Sans Mono',
+      '-fs',
+      15,
+      '-bg',
+      '#10141b',
+      '-fg',
+      '#e6e9ef',
+      '-geometry',
+      '106x28+0+0',
+      '-e',
+      checkScript
+    ],
     { stdio: 'ignore' }
   )
   term.once('exit', resolve)

@@ -6,6 +6,7 @@ dist-electron/
 coverage/
 playwright-report/
 test-results/
+tests/fixtures/.generated-*
 verification/reports/
 *.log
 .DS_Store

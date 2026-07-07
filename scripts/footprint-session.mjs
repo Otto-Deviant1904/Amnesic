@@ -83,7 +83,9 @@ const app = await electron.launch({
   env: {
     ...process.env,
     AMNESIC_SHM_DIR: shmDir,
-    XDG_CACHE_HOME: path.join(shmDir, 'xdg-cache')
+    XDG_CACHE_HOME: path.join(shmDir, 'xdg-cache'),
+    // Minimal list: exercises blocking-on without per-request EasyList scan cost.
+    AMNESIC_BLOCKLIST_PATH: path.join(root, 'tests/fixtures/footprint-blocklist.txt')
   }
 })
 const exited = new Promise((resolve) => app.process().once('exit', resolve))
@@ -167,6 +169,18 @@ await window.waitForSelector('.tab--active .tab__title:has-text("Footprint Probe
 })
 if (!fs.existsSync(shmDir)) {
   fail('tmpfs userData dir vanished after opening a container tab — only final exit may remove it')
+}
+
+// Content blocking (ADR 0013): on by default — browse with it active; the
+// bundled list is in-memory only (no runtime downloads, no disk writes).
+await window.focus('.address-bar__input')
+await window.keyboard.type(`localhost:${port}/page4`)
+await window.keyboard.press('Enter')
+await window.waitForSelector('.tab--active .tab__title:has-text("Footprint Probe Ready")', {
+  timeout: 15000
+})
+if (!fs.existsSync(shmDir)) {
+  fail('tmpfs userData dir vanished after browsing with blocking on')
 }
 
 // Close the window (not app.close()) so the real user exit path runs:

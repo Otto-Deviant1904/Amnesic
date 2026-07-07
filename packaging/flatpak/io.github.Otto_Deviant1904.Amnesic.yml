@@ -35,8 +35,8 @@ finish-args:
   # Display + GPU. Wayland with X11 fallback.
   - --socket=wayland
   - --socket=fallback-x11
-  - --share=ipc          # required for X11 / shared-memory rendering
-  - --device=dri         # GPU acceleration
+  - --share=ipc # required for X11 / shared-memory rendering
+  - --device=dri # GPU acceleration
 
   # The app is a browser: it needs the network.
   - --share=network
@@ -80,4 +80,4 @@ modules:
       # Pin to a real release + sha256 before building. Placeholder version.
       - type: file
         url: https://github.com/Otto-Deviant1904/Amnesic/releases/download/v0.1.2/amnesic-browser-0.1.2-x86_64.AppImage
-        sha256: 0000000000000000000000000000000000000000000000000000000000000000  # PLACEHOLDER — fill from SHA256SUMS
+        sha256: 0000000000000000000000000000000000000000000000000000000000000000 # PLACEHOLDER — fill from SHA256SUMS

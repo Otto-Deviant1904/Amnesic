@@ -147,6 +147,19 @@ sites within a tab (it is per-tab, not per-site/first-party isolation), every
 tab still shares one IP, and fingerprinting can still correlate across tabs.
 Session-only, never persisted (see [ADR 0011](docs/adr/0011-containers-per-tab-sessions.md)).
 
+**Blocking** (the blocking chip in the toolbar) is **on by default** — the one
+deliberate exception to this project's usual off-by-default rule for privacy toggles.
+It runs the [@ghostery/adblocker](https://github.com/ghostery/adblocker) engine over
+bundled snapshots of EasyList and the uBlock Origin filter lists (refreshed at
+release time only; **no runtime downloads** — sources and checksums in
+`resources/adblock/ATTRIBUTION.md`): network requests are blocked with full
+ABP/uBO filter semantics, cosmetic `##` rules hide in-page ad slots, and uBO
+`##+js(...)` scriptlets execute in the page — the data-driven mechanism that
+also defeats same-origin video ads (e.g. YouTube), with no site-specific code
+in this repository. Toggle off any time; the blocked-request counter resets on
+New Identity but the on/off setting survives like proxy/DNS.
+See [ADR 0013](docs/adr/0013-content-blocking.md).
+
 | Shortcut                       | Action                                                                         |
 | ------------------------------ | ------------------------------------------------------------------------------ |
 | `Ctrl+T` / `Ctrl+W`            | new / close tab                                                                |

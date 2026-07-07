@@ -1,0 +1,1 @@
+! Footprint verifier fixture — blocking enabled, zero rules (exercises the hook without EasyList scan cost).

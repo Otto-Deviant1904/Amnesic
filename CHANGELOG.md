@@ -3,6 +3,34 @@
 All notable changes to Amnesic Browser are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] — Unreleased
+
+### Added
+
+- **Content blocking** (ADR 0013): the @ghostery/adblocker engine (pinned
+  2.18.1, MPL-2.0, bundled into the app — no native code) over bundled verbatim
+  snapshots of EasyList and the uBlock Origin `filters` / `quick-fixes` /
+  `privacy` lists plus the uBO scriptlet resources (sources, retrieval dates,
+  and SHA-256 recorded in `resources/adblock/ATTRIBUTION.md`; refreshed only at
+  release time by `scripts/update-blocklists.mjs` — never at runtime). On by
+  default (owner-approved exception to off-by-default), session-only, never
+  persisted.
+  - Network cancellation with full ABP/uBO filter semantics (`$third-party`,
+    `$domain=`, `@@` exceptions, `$important`, `$redirect`, `$badfilter`) and
+    PSL-correct party classification; `$csp` directive injection on document
+    responses.
+  - Cosmetic filtering (`##` hide rules) and **uBO scriptlet injection**
+    (`##+js(...)` — e.g. `json-prune` against the YouTube player response),
+    driven per page by a session frame preload. This is what makes same-origin
+    video ads blockable; entirely data-driven from the filter lists, no
+    site-specific code.
+  - `Blocking` toolbar chip with a live session blocked-count (pushed from the
+    main process, throttled; resets on New Identity). Toggling off/on applies
+    to every live session instantly, including container tabs.
+  - Engine parse cost ~150 ms once at startup; per-request match overhead
+    measured at ~1.3 µs mean (the interim homemade matcher this replaces before
+    any release measured 60–78 ms per request and could not support scriptlets).
+
 ## [0.5.0] — Unreleased
 
 ### Changed

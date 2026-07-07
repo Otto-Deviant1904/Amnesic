@@ -3,7 +3,13 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // Bundle the @ghostery/adblocker engine (and its transitive deps) INTO the
+    // main output: the packaged app ships out/** but not node_modules
+    // (electron-builder.yml), so an externalized require('@ghostery/adblocker')
+    // would fail at runtime. electron stays external (provided by the runtime).
+    // The frame preload file is shipped separately via extraResources — see
+    // blocking.ts framePreloadPath() and ADR 0013.
+    plugins: [externalizeDepsPlugin({ exclude: ['@ghostery/adblocker'] })],
     build: {
       rollupOptions: {
         input: {

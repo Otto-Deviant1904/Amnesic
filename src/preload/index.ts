@@ -3,6 +3,7 @@ import {
   IPC_CHANNELS,
   type AmnesicBridge,
   type AuthRequest,
+  type BlockingStatus,
   type FindResult,
   type ShellNotice,
   type TabState
@@ -45,6 +46,8 @@ const bridge: AmnesicBridge = {
   getContainersStatus: () => ipcRenderer.invoke(IPC_CHANNELS.CONTAINERS_GET_STATUS),
   setContainersEnabled: (enabled) =>
     ipcRenderer.invoke(IPC_CHANNELS.CONTAINERS_SET_ENABLED, enabled),
+  getBlockingStatus: () => ipcRenderer.invoke(IPC_CHANNELS.BLOCKING_GET_STATUS),
+  setBlockingEnabled: (enabled) => ipcRenderer.invoke(IPC_CHANNELS.BLOCKING_SET_ENABLED, enabled),
   findStart: (tabId, text, forward, findNext) =>
     ipcRenderer.invoke(IPC_CHANNELS.FIND_START, tabId, text, forward, findNext),
   findStop: (tabId, keepSelection) =>
@@ -60,7 +63,9 @@ const bridge: AmnesicBridge = {
   onAuthCancelled: (listener) => subscribe<[string]>(IPC_CHANNELS.AUTH_CANCELLED, listener),
   onFocusAddress: (listener) => subscribe<[]>(IPC_CHANNELS.SHELL_FOCUS_ADDRESS, listener),
   onOpenFind: (listener) => subscribe<[]>(IPC_CHANNELS.SHELL_OPEN_FIND, listener),
-  onNotice: (listener) => subscribe<[ShellNotice]>(IPC_CHANNELS.SHELL_NOTICE, listener)
+  onNotice: (listener) => subscribe<[ShellNotice]>(IPC_CHANNELS.SHELL_NOTICE, listener),
+  onBlockingStatus: (listener) =>
+    subscribe<[BlockingStatus]>(IPC_CHANNELS.BLOCKING_STATUS_CHANGED, listener)
 }
 
 contextBridge.exposeInMainWorld('amnesic', bridge)

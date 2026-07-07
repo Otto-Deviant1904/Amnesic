@@ -1,0 +1,7 @@
+! Hermetic e2e fixture (tests/e2e/blocking.spec.ts). The tracker port
+! placeholder is substituted at test time. One network rule, one cosmetic rule,
+! and one scriptlet rule (+js resolves against the bundled uBO resources.json —
+! the same data-driven mechanism that blocks same-origin YouTube ads; ADR 0013).
+|http://127.0.0.1:TRACKER_PORT^
+localhost##.ad-box
+localhost##+js(set-constant, __amnesicScriptletProof, true)

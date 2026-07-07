@@ -32,7 +32,10 @@ export const IPC_CHANNELS = {
   DNS_SET_PROVIDER: 'dns:set-provider',
   DNS_LIST_PROVIDERS: 'dns:list-providers',
   CONTAINERS_GET_STATUS: 'containers:get-status',
-  CONTAINERS_SET_ENABLED: 'containers:set-enabled'
+  CONTAINERS_SET_ENABLED: 'containers:set-enabled',
+  BLOCKING_GET_STATUS: 'blocking:get-status',
+  BLOCKING_SET_ENABLED: 'blocking:set-enabled',
+  BLOCKING_STATUS_CHANGED: 'blocking:status-changed'
 } as const
 
 /** A failed main-frame load, rendered as an in-shell error page. */
@@ -166,6 +169,20 @@ export interface ContainersStatus {
   enabled: boolean
 }
 
+/** Content blocking (ADR 0013): @ghostery/adblocker engine over bundled EasyList
+ *  + uBlock Origin snapshots — network filtering, cosmetic CSS, and scriptlet
+ *  injection (the mechanism that blocks same-origin YouTube ads). Session-only —
+ *  never persisted, on by default (the one deliberate default-on exception).
+ *  The engine honours each list's own $third-party semantics; there is no
+ *  homemade party-scope mode. `blockedCount` is an activity stat reset by New
+ *  Identity, not a security setting — the enabled flag survives New Identity
+ *  like proxy/DNS/containers. Pushed to the renderer via BLOCKING_STATUS_CHANGED
+ *  (throttled) as the count climbs and on reset. */
+export interface BlockingStatus {
+  enabled: boolean
+  blockedCount: number
+}
+
 export interface AmnesicBridge {
   newTab: (url?: string) => Promise<string>
   closeTab: (tabId: string) => Promise<void>
@@ -188,6 +205,8 @@ export interface AmnesicBridge {
   listDnsProviders: () => Promise<DnsProviderOption[]>
   getContainersStatus: () => Promise<ContainersStatus>
   setContainersEnabled: (enabled: boolean) => Promise<ContainersStatus>
+  getBlockingStatus: () => Promise<BlockingStatus>
+  setBlockingEnabled: (enabled: boolean) => Promise<BlockingStatus>
   findStart: (tabId: string, text: string, forward: boolean, findNext: boolean) => Promise<void>
   findStop: (tabId: string, keepSelection: boolean) => Promise<void>
   respondAuth: (requestId: string, credentials: AuthCredentials | null) => Promise<void>
@@ -201,4 +220,5 @@ export interface AmnesicBridge {
   onFocusAddress: (listener: () => void) => () => void
   onOpenFind: (listener: () => void) => () => void
   onNotice: (listener: (notice: ShellNotice) => void) => () => void
+  onBlockingStatus: (listener: (status: BlockingStatus) => void) => () => void
 }
