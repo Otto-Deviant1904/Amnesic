@@ -20,6 +20,9 @@ jobs:
 
       - run: npm run typecheck
       - run: npm run lint
+      # `format` is prettier --check (write mode lives in lint-staged) — fails
+      # on drift that bypassed the pre-commit hook (--no-verify, GitHub web edits).
+      - run: npm run format
       - run: npm test
       - run: npm run build
 
