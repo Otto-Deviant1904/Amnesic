@@ -3,6 +3,21 @@
 All notable changes to Amnesic Browser are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.1] — Unreleased
+
+### Fixed
+
+- **arm64 release build was broken**: `electron-builder.yml`'s `linux.target`
+  restricted the AppImage target to `arch: [x64]`. On the arm64 CI runner, no
+  configured target matched the build arch, so electron-builder silently fell
+  back to its own default Linux target list (AppImage _and_ snap) instead of
+  just AppImage — and `snapcraft` isn't installed on the runner, so the arm64
+  leg of `release.yml` failed with `spawn snapcraft ENOENT` on every v0.6.0
+  release attempt. Fixed by listing both arches (`arch: [x64, arm64]`)
+  explicitly. v0.6.0's GitHub release therefore shipped with no AppImage
+  binaries (source archive only); v0.6.1 is a packaging-only patch to restore
+  working release artifacts, no application code changed.
+
 ## [0.6.0] — Unreleased
 
 ### Added

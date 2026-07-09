@@ -58,8 +58,13 @@ electronFuses:
 
 linux:
   target:
+    # arch must list every arch the release workflow builds (x64 + arm64,
+    # release.yml's build matrix). electron-builder falls back to its own
+    # default target list (AppImage *and* snap) for any arch not matched
+    # here, and snapcraft isn't installed on the CI runners — the arm64 leg
+    # failed with `spawn snapcraft ENOENT` before this was arch-complete.
     - target: AppImage
-      arch: [x64]
+      arch: [x64, arm64]
   icon: build/icons
   category: Network
   # Electron reads desktopName from package.json to set its Wayland app_id;
