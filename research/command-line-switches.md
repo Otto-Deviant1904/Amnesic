@@ -4,6 +4,15 @@
 **Pinned version confirmed from package.json:** `electron@43.0.0`
 **Chromium base confirmed:** 150.0.7871.46 (Node.js 24.17.0, V8 15.0.245.13) — via releases.electronjs.org/release/v43.0.0
 
+**Re-verified 2026-07-09 for the bump to `electron@43.1.0`:** Chromium
+150.0.7871.47, Node.js 24.18.0 — via the v43.1.0 GitHub release notes
+(api.github.com/repos/electron/electron/releases/tags/v43.1.0). The release
+contains one fix (a crash when replacing an open application menu, #52276)
+plus the Chromium/Node patch bumps; no change to switch handling,
+`disable-features` flag names, WebRTC behavior, or the fuses API. Chromium
+stays on the same 150 branch, so every per-switch verdict below (including
+the `no-referrers` dead-switch verdict) carries over unchanged.
+
 All switches below are appended via `app.commandLine.appendSwitch(...)` before `app.ready`, as the plan proposes. Verified against Electron's own `docs/api/command-line-switches.md` (the authoritative list of switches Electron itself documents/implements or explicitly passes through) plus Chromium source (`chromium.googlesource.com/chromium/src`, HEAD) for switches Electron doesn't document itself.
 
 ## 1. `disable-http-cache`

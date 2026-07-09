@@ -50,7 +50,9 @@ import {
 import { diskBackedSwapDevices } from './swap'
 
 // --- Command-line switches (must be set before app is ready) ---
-// Each entry verified against electron@43.0.0 / Chromium 150.0.7871.46.
+// Each entry verified against electron@43.0.0 / Chromium 150.0.7871.46, and
+// re-verified for electron@43.1.0 / Chromium 150.0.7871.47 (same Chromium 150
+// branch; the 43.1.0 release notes touch no switch/feature-flag handling).
 // See research/command-line-switches.md and docs/adr/0002-electron-43-flag-and-api-corrections.md.
 // Re-verify all of these with the electron-researcher subagent before any Electron version bump.
 app.commandLine.appendSwitch('disable-http-cache') // disables the HTTP disk cache (userData/Cache)
