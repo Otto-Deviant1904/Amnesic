@@ -81,7 +81,11 @@ test('panic key wipes and exits when a tab (not the shell) has focus', async () 
       )
     ])
 
-    expect(fs.existsSync(shmDir)).toBe(false)
+    // The final deletion is completed by the detached post-exit janitor
+    // (ADR 0014) ~50-100ms after the process dies — poll briefly instead of
+    // asserting at the exact exit instant, with a tight deadline so a broken
+    // janitor still fails here.
+    await expect.poll(() => fs.existsSync(shmDir), { timeout: 2000 }).toBe(false)
   } finally {
     server.close()
   }

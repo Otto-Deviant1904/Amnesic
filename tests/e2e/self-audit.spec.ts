@@ -21,11 +21,13 @@ test('self-audit panel renders every check and the re-check button is clickable'
   const rows = window.locator('.self-audit__row')
   await expect(rows).toHaveCount(8)
 
-  // At least one row must be honestly labeled as build/CI-enforced (the
-  // crash-reporter guarantee) rather than presented as a runtime check.
+  // Rows with no runtime signal must be honestly labeled as build/CI-enforced
+  // rather than presented as runtime checks: the crash-reporter guarantee and,
+  // since ADR 0014, the cache-residue guarantee (proven by the CI footprint
+  // verifier, not re-probed by the panel).
   await expect(
     window.locator('.self-audit__provenance', { hasText: 'enforced by CI' })
-  ).toHaveCount(1)
+  ).toHaveCount(2)
 
   // The refresh button must be a real, clickable target — not occluded by
   // an ancestor with a collapsed layout box (see file header).

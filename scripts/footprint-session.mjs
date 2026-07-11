@@ -195,6 +195,15 @@ await Promise.race([
 
 server.close()
 
+// The final wipe is completed by the detached post-exit janitor (ADR 0014):
+// Chromium's native shutdown re-writes cache-index/prefs files after the
+// in-process rmSync, so the authoritative deletion happens ~50-100ms AFTER
+// the process dies. Poll briefly rather than asserting instantaneously; the
+// deadline stays tight (2s) so a broken janitor still fails loudly.
+const janitorDeadline = Date.now() + 2000
+while (fs.existsSync(shmDir) && Date.now() < janitorDeadline) {
+  await new Promise((r) => setTimeout(r, 50))
+}
 if (fs.existsSync(shmDir)) {
   fail(`tmpfs userData dir survived exit: ${shmDir}`)
 }

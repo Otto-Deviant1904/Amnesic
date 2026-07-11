@@ -55,8 +55,16 @@ import { diskBackedSwapDevices } from './swap'
 // branch; the 43.1.0 release notes touch no switch/feature-flag handling).
 // See research/command-line-switches.md and docs/adr/0002-electron-43-flag-and-api-corrections.md.
 // Re-verify all of these with the electron-researcher subagent before any Electron version bump.
-app.commandLine.appendSwitch('disable-http-cache') // disables the HTTP disk cache (userData/Cache)
-app.commandLine.appendSwitch('disable-gpu-shader-disk-cache') // disables userData/GPUCache
+// disable-http-cache and disable-gpu-shader-disk-cache deliberately REMOVED
+// (ADR 0014): both stores live under userData, which is redirected to tmpfs
+// below, so they are RAM-only regardless — disabling them bought no disk-residue
+// guarantee over the tmpfs redirect while forcing every resource re-fetch and
+// every shader recompile on every load. The one real hazard found in enabling
+// them: Chromium's native shutdown re-writes cache-index/prefs files AFTER the
+// in-process rmSync in cleanupAndExit(), which is why the post-exit janitor
+// (spawnExitJanitor) exists — do not re-enable these caches without it, and do
+// not remove the janitor while they are enabled. Verified via repeated
+// scripts/verify_footprint.sh runs; see ADR 0014.
 app.commandLine.appendSwitch('disable-background-networking') // reduces background phone-home; defense-in-depth, not exhaustive
 app.commandLine.appendSwitch('disable-component-update') // disables Chromium's component updater (e.g. Certificate Transparency)
 // disable-crash-reporter / disable-breakpad kept as defense-in-depth only. The actual
@@ -193,7 +201,10 @@ function currentPartitionName(): string {
 }
 
 function getInMemorySession() {
-  return session.fromPartition(currentPartitionName(), { cache: false })
+  // cache stays at its default (true) since ADR 0014 — a non-persist:
+  // partition gets Chromium's in-memory cache backend, and the memory-only
+  // guarantee comes entirely from the missing persist: prefix.
+  return session.fromPartition(currentPartitionName())
 }
 
 // Containers mode (ADR 0011): per-tab isolated sessions. Session-only state —
@@ -230,9 +241,8 @@ function setContainersEnabled(next: boolean): ContainersStatus {
 // invariant a type fact, not a comment — createTab has no way to obtain an
 // unprepared session.
 async function prepareFreshTabSession(): Promise<Session> {
-  const ses = session.fromPartition(tabPartitionName(sessionGeneration, ++tabPartitionCounter), {
-    cache: false
-  })
+  // cache stays at its default (true) since ADR 0014 — see getInMemorySession().
+  const ses = session.fromPartition(tabPartitionName(sessionGeneration, ++tabPartitionCounter))
   await hardenSession(ses)
   return ses
 }
@@ -1298,15 +1308,21 @@ function buildAuditReport(): AuditReport {
       "the crash reporter's start call anywhere in src/ — see docs/threat-model.md §2 and ADR 0002."
   })
 
-  const httpCacheDisabled = app.commandLine.hasSwitch('disable-http-cache')
   checks.push({
     id: 'http-cache',
-    label: 'HTTP disk cache disabled',
-    verifiedAtRuntime: true,
-    status: httpCacheDisabled ? 'pass' : 'fail',
-    detail: httpCacheDisabled
-      ? 'The disable-http-cache command-line switch is active'
-      : 'disable-http-cache switch not found — this should never happen'
+    label: 'HTTP and GPU shader caches are RAM-only (tmpfs), never real disk',
+    // Confirms only that userData sits on tmpfs (the 'tmpfs' check above does
+    // the actual runtime probe) — this doesn't re-probe Chromium's cache
+    // backends themselves (ADR 0014).
+    verifiedAtRuntime: false,
+    status: linux ? 'pass' : 'warn',
+    detail: linux
+      ? 'Enabled for speed (ADR 0014) but written only under userData, which is ' +
+        'redirected to tmpfs. Wiped at exit by cleanupAndExit plus a post-exit ' +
+        "janitor process (Chromium's shutdown re-writes cache-index/prefs files " +
+        'after in-process cleanup — the janitor deletes again once the process ' +
+        'is gone; verified via scripts/verify_footprint.sh).'
+      : 'Only checked on Linux — see docs/threat-model.md §4 for other platforms'
   })
 
   const partitionName = currentPartitionName()
@@ -1409,6 +1425,33 @@ function createWindow(): void {
   // event could be sent before the renderer's IPC listener is registered.
 }
 
+// Post-exit janitor (ADR 0014): a detached /bin/sh that waits for THIS pid to
+// die, then removes the tmpfs dir. The in-process rmSync below is necessary
+// but not sufficient — Chromium's native shutdown (after app.exit()) re-writes
+// files under userData: the disk-cache backend flushes Cache/Cache_Data/
+// index-dir/the-real-index, and the prefs/network-state writers re-create
+// Local State, Preferences, and Network Persistent State. Verified
+// empirically via scripts/verify_footprint.sh: with the HTTP cache enabled,
+// the tmpfs dir reliably survived exit on rmSync alone. No in-process code
+// can win that race — the only ordering that works is "after the process is
+// gone", which takes a second process. Bounded (60s) so a hung app can't
+// leave an immortal poll loop; sweepStaleShmDirs() on next launch remains
+// the fallback for SIGKILL/crash, where this spawn never runs.
+function spawnExitJanitor(dir: string): void {
+  // The dir is always /dev/shm/amnesic-browser-<pid> (or an AMNESIC_SHM_DIR
+  // the bootstrap validated to start with /dev/shm/), so a quote can only
+  // appear if that invariant breaks — refuse to build a shell string from it.
+  if (dir.includes("'")) return
+  try {
+    const script =
+      `i=0; while [ -d /proc/${process.pid} ] && [ $i -lt 1200 ]; do sleep 0.05; i=$((i+1)); done; ` +
+      `rm -rf -- '${dir}'`
+    spawn('/bin/sh', ['-c', script], { detached: true, stdio: 'ignore' }).unref()
+  } catch {
+    /* spawn failure must not block exit; sweepStaleShmDirs covers the residue */
+  }
+}
+
 let cleanupStarted = false
 
 async function cleanupAndExit(): Promise<void> {
@@ -1440,8 +1483,12 @@ async function cleanupAndExit(): Promise<void> {
   // scripts/verify_footprint.sh (ADR 0004). Deleting after the clears and
   // immediately before exit; open file handles don't block unlinking on
   // Linux. force:true because a failure to delete must not block exit.
+  // The janitor then re-deletes AFTER the process dies, because Chromium's
+  // native shutdown re-writes cache-index/prefs files after this rmSync —
+  // see spawnExitJanitor above (ADR 0014).
   if (ramUserData) {
     rmSync(ramUserData, { recursive: true, force: true })
+    spawnExitJanitor(ramUserData)
   }
   // Release the single-instance socket so the next launch doesn't have to
   // detect it as stale (it would recover anyway — see single-instance.ts).
@@ -1489,8 +1536,12 @@ app.whenReady().then(async () => {
     if (!instanceLock.acquired) {
       // URLs delivered to the running instance. Remove this launch's tmpfs
       // dir before exiting — nothing was browsed, but the bootstrap created
-      // it, and cleanupAndExit never runs on this path.
-      if (ramUserData) rmSync(ramUserData, { recursive: true, force: true })
+      // it, and cleanupAndExit never runs on this path. Janitor for the same
+      // post-exit rewrite race as the main exit path (ADR 0014).
+      if (ramUserData) {
+        rmSync(ramUserData, { recursive: true, force: true })
+        spawnExitJanitor(ramUserData)
+      }
       app.exit(0)
       return
     }
