@@ -26,6 +26,7 @@ import { useTabsStore } from './store/tabs'
 // value via setChromeHeight so the page view shrinks when the find bar opens.
 const CHROME_BASE_HEIGHT = 88
 const FIND_BAR_HEIGHT = 35
+const NOTICE_HEIGHT = 28
 
 function normalizeUrl(input: string): string {
   const trimmed = input.trim()
@@ -52,6 +53,26 @@ function cycle(ids: string[], active: string | null, delta: number): void {
   if (next) void window.amnesic.activateTab(next)
 }
 
+function presentUrl(url: string): { host: string; rest: string } | null {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+    const rest = `${parsed.pathname}${parsed.search}${parsed.hash}`
+    return { host: parsed.host, rest: rest === '/' ? '' : rest }
+  } catch {
+    return null
+  }
+}
+
+function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000))
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const seconds = total % 60
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${pad(minutes)}:${pad(seconds)}`
+}
+
 function tabLabel(title: string, url: string): string {
   if (title) return title
   if (!url) return 'New tab'
@@ -73,6 +94,8 @@ export default function App() {
   const [identityFlash, setIdentityFlash] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const activeTabRef = useRef<HTMLDivElement | null>(null)
+  const [elapsed, setElapsed] = useState('00:00')
+  const [draggingId, setDraggingId] = useState<string | null>(null)
   const dragTabId = useRef<string | null>(null)
   const hasRequestedInitialTab = useRef(false)
   const downloadToastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -112,13 +135,22 @@ export default function App() {
     void window.amnesic.newTab()
   }, [])
 
-  // The page's WebContentsView is laid out by main directly below the chrome,
-  // so main must know when the find bar changes the chrome's height.
   useEffect(() => {
-    void window.amnesic.setChromeHeight(
-      findOpen ? CHROME_BASE_HEIGHT + FIND_BAR_HEIGHT : CHROME_BASE_HEIGHT
-    )
-  }, [findOpen])
+    const opened = Date.now()
+    const id = window.setInterval(() => {
+      setElapsed(formatElapsed(Date.now() - opened))
+    }, 1000)
+    return () => window.clearInterval(id)
+  }, [])
+
+  // The page's WebContentsView is laid out by main directly below the chrome,
+  // so main must know when the find bar or the download notice changes height.
+  useEffect(() => {
+    let height = CHROME_BASE_HEIGHT
+    if (findOpen) height += FIND_BAR_HEIGHT
+    if (blockedDownload) height += NOTICE_HEIGHT
+    void window.amnesic.setChromeHeight(height)
+  }, [findOpen, blockedDownload])
 
   // Find state is per-page — switching tabs closes the bar (FindBar's unmount
   // cleanup stops the search on the tab it belonged to).
@@ -188,6 +220,7 @@ export default function App() {
   // While the user is typing, show their draft; otherwise mirror the tab's
   // live URL so navigations inside the page keep the address bar honest.
   const displayValue = editing ? draft : activeUrl
+  const presented = editing ? null : presentUrl(activeUrl)
   const scheme = activeUrl.startsWith('https://')
     ? 'https'
     : activeUrl.startsWith('http://')
@@ -232,74 +265,78 @@ export default function App() {
         </div>
       )}
       <div className="chrome">
-        <div className="tab-strip" role="tablist">
-          {order.map((id) => {
-            const tab = tabs[id]
-            if (!tab) return null
-            const isActive = id === activeTabId
-            return (
-              <div
-                key={id}
-                ref={isActive ? activeTabRef : undefined}
-                role="tab"
-                aria-selected={isActive}
-                className={`tab${isActive ? ' tab--active' : ''}`}
-                title={tab.url || undefined}
-                draggable
-                onDragStart={(event) => {
-                  dragTabId.current = id
-                  event.dataTransfer.effectAllowed = 'move'
-                }}
-                onDragOver={(event) => {
-                  event.preventDefault()
-                  event.dataTransfer.dropEffect = 'move'
-                }}
-                onDrop={(event) => {
-                  event.preventDefault()
-                  handleTabDrop(id)
-                }}
-                onDragEnd={() => {
-                  dragTabId.current = null
-                }}
-                onClick={() => void window.amnesic.activateTab(id)}
-                onAuxClick={(event) => {
-                  if (event.button === 1) void window.amnesic.closeTab(id)
-                }}
-              >
-                {tab.loading ? (
-                  <span className="tab__spinner" />
-                ) : tab.favicon ? (
-                  <img className="tab__favicon" src={tab.favicon} alt="" draggable={false} />
-                ) : null}
-                {(tab.audible || tab.muted) && (
+        <div className="tab-strip">
+          <div className="tab-strip__tabs" role="tablist">
+            {order.map((id) => {
+              const tab = tabs[id]
+              if (!tab) return null
+              const isActive = id === activeTabId
+              return (
+                <div
+                  key={id}
+                  ref={isActive ? activeTabRef : undefined}
+                  role="tab"
+                  aria-selected={isActive}
+                  className={`tab${isActive ? ' tab--active' : ''}${draggingId === id ? ' tab--dragging' : ''}`}
+                  title={tab.url || undefined}
+                  draggable
+                  onDragStart={(event) => {
+                    dragTabId.current = id
+                    setDraggingId(id)
+                    event.dataTransfer.effectAllowed = 'move'
+                  }}
+                  onDragOver={(event) => {
+                    event.preventDefault()
+                    event.dataTransfer.dropEffect = 'move'
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault()
+                    handleTabDrop(id)
+                  }}
+                  onDragEnd={() => {
+                    dragTabId.current = null
+                    setDraggingId(null)
+                  }}
+                  onClick={() => void window.amnesic.activateTab(id)}
+                  onAuxClick={(event) => {
+                    if (event.button === 1) void window.amnesic.closeTab(id)
+                  }}
+                >
+                  {tab.loading ? (
+                    <span className="tab__spinner" />
+                  ) : tab.favicon ? (
+                    <img className="tab__favicon" src={tab.favicon} alt="" draggable={false} />
+                  ) : null}
+                  {(tab.audible || tab.muted) && (
+                    <button
+                      className={`tab__audio${tab.muted ? ' tab__audio--muted' : ''}`}
+                      tabIndex={-1}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        void window.amnesic.toggleMute(id)
+                      }}
+                      aria-label={tab.muted ? 'Unmute tab' : 'Mute tab'}
+                      title={tab.muted ? 'Unmute tab' : 'Mute tab'}
+                    >
+                      {tab.muted ? <SpeakerMutedIcon size={11} /> : <SpeakerIcon size={11} />}
+                    </button>
+                  )}
+                  <span className="tab__title">{tabLabel(tab.title, tab.url)}</span>
                   <button
-                    className={`tab__audio${tab.muted ? ' tab__audio--muted' : ''}`}
+                    className="tab__close"
                     tabIndex={-1}
                     onClick={(event) => {
                       event.stopPropagation()
-                      void window.amnesic.toggleMute(id)
+                      void window.amnesic.closeTab(id)
                     }}
-                    aria-label={tab.muted ? 'Unmute tab' : 'Mute tab'}
-                    title={tab.muted ? 'Unmute tab' : 'Mute tab'}
+                    aria-label="Close tab"
                   >
-                    {tab.muted ? <SpeakerMutedIcon size={11} /> : <SpeakerIcon size={11} />}
+                    <CloseIcon size={11} />
                   </button>
-                )}
-                <span className="tab__title">{tabLabel(tab.title, tab.url)}</span>
-                <button
-                  className="tab__close"
-                  tabIndex={-1}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    void window.amnesic.closeTab(id)
-                  }}
-                  aria-label="Close tab"
-                >
-                  <CloseIcon size={11} />
-                </button>
-              </div>
-            )
-          })}
+                </div>
+              )
+            })}
+          </div>
           <button
             className="tab-strip__new"
             onClick={() => void window.amnesic.newTab()}
@@ -346,19 +383,6 @@ export default function App() {
           >
             {activeTab?.loading ? <CloseIcon size={13} /> : <ReloadIcon size={14} />}
           </button>
-          <button
-            type="button"
-            className="nav-bar__button"
-            onClick={() => void window.amnesic.newIdentity()}
-            aria-label="New identity"
-            title="New identity — close all tabs and start a fresh session (Ctrl+Shift+N)"
-          >
-            <MaskIcon size={14} />
-          </button>
-          <ProxyControl />
-          <DnsControl />
-          <ContainersControl />
-          <BlockingControl />
 
           <div className="address-field">
             {!editing && scheme === 'https' && (
@@ -374,28 +398,37 @@ export default function App() {
                 not secure
               </span>
             )}
-            <input
-              ref={inputRef}
-              className="address-bar__input"
-              value={displayValue}
-              spellCheck={false}
-              autoComplete="off"
-              onChange={(event) => setDraft(event.target.value)}
-              onFocus={(event) => {
-                setEditing(true)
-                setDraft(activeUrl)
-                event.target.select()
-              }}
-              onBlur={() => setEditing(false)}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape') {
+            <div className="address-field__value">
+              {presented && (
+                <span className="address-field__presented" aria-hidden="true">
+                  <span className="address-field__host">{presented.host}</span>
+                  {presented.rest && <span className="address-field__rest">{presented.rest}</span>}
+                </span>
+              )}
+              <input
+                ref={inputRef}
+                className={`address-bar__input${presented ? ' address-bar__input--presented' : ''}`}
+                value={displayValue}
+                spellCheck={false}
+                autoComplete="off"
+                onChange={(event) => setDraft(event.target.value)}
+                onFocus={(event) => {
+                  setEditing(true)
                   setDraft(activeUrl)
-                  setEditing(false)
-                  event.currentTarget.blur()
-                }
-              }}
-              placeholder="Search or type a URL"
-            />
+                  event.target.select()
+                }}
+                onBlur={() => setEditing(false)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    setDraft(activeUrl)
+                    setEditing(false)
+                    event.currentTarget.blur()
+                  }
+                }}
+                placeholder="Search or type a URL"
+                aria-label="Address"
+              />
+            </div>
             {!editing && activeTab && activeTab.zoomPercent !== 100 && (
               <button
                 type="button"
@@ -408,15 +441,31 @@ export default function App() {
             )}
           </div>
 
-          {blockedDownload && (
-            <span className="download-notice" title={blockedDownload}>
-              download blocked · {blockedDownload}
-            </span>
-          )}
+          <div className="tool-cluster">
+            <ProxyControl />
+            <DnsControl />
+            <ContainersControl />
+            <BlockingControl />
+            <button
+              type="button"
+              className="nav-bar__button nav-bar__button--identity"
+              onClick={() => void window.amnesic.newIdentity()}
+              aria-label="New identity"
+              title="New identity — close all tabs and start a fresh session (Ctrl+Shift+N)"
+            >
+              <MaskIcon size={14} />
+            </button>
+          </div>
         </form>
 
         {findOpen && activeTabId && (
           <FindBar key={activeTabId} tabId={activeTabId} onClose={() => setFindOpen(false)} />
+        )}
+
+        {blockedDownload && (
+          <div className="notice-bar download-notice" title={blockedDownload} role="status">
+            download blocked · {blockedDownload}
+          </div>
         )}
 
         <div className={`progress${activeTab?.loading ? ' progress--active' : ''}`} />
@@ -435,43 +484,58 @@ export default function App() {
         ) : (
           !activeUrl && (
             <div className="start-page">
-              <div className="start-page__mark">amnesic</div>
-              <p className="start-page__tagline">
-                Nothing is written to disk. Close the window and this session never happened.
-              </p>
-              <div className="start-page__hints">
-                <span>
-                  <kbd>Ctrl</kbd>
-                  <kbd>T</kbd> new tab
-                </span>
-                <span>
-                  <kbd>Ctrl</kbd>
-                  <kbd>L</kbd> address
-                </span>
-                <span>
-                  <kbd>Ctrl</kbd>
-                  <kbd>W</kbd> close
-                </span>
-              </div>
-
-              {swapWarning && (
-                <div className="swap-warning" role="note">
+              <div className="start-page__column">
+                <div className="start-page__mark">amnesic</div>
+                <p className="start-page__tagline">
+                  Nothing is written to disk. Close the window and this session never happened.
+                </p>
+                <p className="start-page__clock">
+                  Window open <span className="start-page__elapsed">{elapsed}</span>. Memory only.
+                </p>
+                <div className="start-page__hints">
                   <span>
-                    Disk-backed swap is active ({swapWarning}). Under memory pressure the OS can
-                    write this session&apos;s memory to disk — use encrypted swap or disable swap
-                    for the full guarantee. See docs/threat-model.md.
+                    <kbd>Ctrl</kbd>
+                    <kbd>T</kbd> new tab
                   </span>
-                  <button
-                    className="swap-warning__dismiss"
-                    onClick={() => setSwapWarning(null)}
-                    aria-label="Dismiss warning"
-                  >
-                    <CloseIcon size={11} />
-                  </button>
+                  <span>
+                    <kbd>Ctrl</kbd>
+                    <kbd>L</kbd> address
+                  </span>
+                  <span>
+                    <kbd>Ctrl</kbd>
+                    <kbd>W</kbd> close
+                  </span>
+                  <span>
+                    <kbd>Ctrl</kbd>
+                    <kbd>Shift</kbd>
+                    <kbd>N</kbd> new identity
+                  </span>
+                  <span>
+                    <kbd>Ctrl</kbd>
+                    <kbd>Shift</kbd>
+                    <kbd>Q</kbd> wipe and quit
+                  </span>
                 </div>
-              )}
 
-              <SelfAuditPanel />
+                {swapWarning && (
+                  <div className="swap-warning" role="note">
+                    <span>
+                      Disk-backed swap is active ({swapWarning}). Under memory pressure the OS can
+                      write this session&apos;s memory to disk — use encrypted swap or disable swap
+                      for the full guarantee. See docs/threat-model.md.
+                    </span>
+                    <button
+                      className="swap-warning__dismiss"
+                      onClick={() => setSwapWarning(null)}
+                      aria-label="Dismiss warning"
+                    >
+                      <CloseIcon size={11} />
+                    </button>
+                  </div>
+                )}
+
+                <SelfAuditPanel />
+              </div>
             </div>
           )
         )}
