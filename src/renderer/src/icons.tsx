@@ -108,6 +108,14 @@ export function SpeakerMutedIcon(props: IconProps) {
   )
 }
 
+export function PassIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3.25 8.25 6.5 11.5l6.25-7" />
+    </Svg>
+  )
+}
+
 export function WarningIcon(props: IconProps) {
   return (
     <Svg {...props}>

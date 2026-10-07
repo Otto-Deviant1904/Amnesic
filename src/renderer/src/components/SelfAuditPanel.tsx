@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import type { AuditCheck } from '../../../shared/ipc'
-import { ReloadIcon } from '../icons'
+import { CloseIcon, PassIcon, ReloadIcon, WarningIcon } from '../icons'
 
-const STATUS_GLYPH: Record<AuditCheck['status'], string> = {
-  pass: '✓',
-  warn: '⚠',
-  fail: '✕'
+const STATUS_ICON: Record<AuditCheck['status'], typeof PassIcon> = {
+  pass: PassIcon,
+  warn: WarningIcon,
+  fail: CloseIcon
 }
 
 export default function SelfAuditPanel() {
@@ -33,27 +33,30 @@ export default function SelfAuditPanel() {
         </button>
       </div>
       <ul className="self-audit__list">
-        {(checks ?? []).map((check) => (
-          <li key={check.id} className={`self-audit__row self-audit__row--${check.status}`}>
-            <span className="self-audit__glyph" aria-hidden="true">
-              {STATUS_GLYPH[check.status]}
-            </span>
-            <div className="self-audit__text">
-              <span className="self-audit__label">{check.label}</span>
-              <span className="self-audit__detail">{check.detail}</span>
-            </div>
-            <span
-              className="self-audit__provenance"
-              title={
-                check.verifiedAtRuntime
-                  ? 'Checked in this running process, just now'
-                  : 'Enforced by build/CI tooling — no reliable way to check this at runtime on Electron 43'
-              }
-            >
-              {check.verifiedAtRuntime ? 'checked now' : 'enforced by CI'}
-            </span>
-          </li>
-        ))}
+        {(checks ?? []).map((check) => {
+          const StatusIcon = STATUS_ICON[check.status]
+          return (
+            <li key={check.id} className={`self-audit__row self-audit__row--${check.status}`}>
+              <span className="self-audit__glyph" aria-hidden="true">
+                <StatusIcon size={13} />
+              </span>
+              <div className="self-audit__text">
+                <span className="self-audit__label">{check.label}</span>
+                <span className="self-audit__detail">{check.detail}</span>
+              </div>
+              <span
+                className="self-audit__provenance"
+                title={
+                  check.verifiedAtRuntime
+                    ? 'Checked in this running process, just now'
+                    : 'Enforced by build/CI tooling — no reliable way to check this at runtime on Electron 43'
+                }
+              >
+                {check.verifiedAtRuntime ? 'checked now' : 'enforced by CI'}
+              </span>
+            </li>
+          )
+        })}
       </ul>
       <p className="self-audit__footnote">
         Rows marked <strong>checked now</strong> were verified in this process this instant. Rows
